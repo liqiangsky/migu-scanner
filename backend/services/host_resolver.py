@@ -90,9 +90,7 @@ class HostResolver:
             logger.error(f"IP2Region query error for {ip}: {e}", exc_info=True)
             return {"province": "", "isp": "Unknown"}
 
-    async def test_host(self, host: str, port: int, path: str = "/") -> dict:
-        test_url = f"http://{host}:{port}{path}{TEST_CHANNEL_CODE}"
-
+    async def test_host(self, test_url: str) -> dict:
         logger.debug(f"Testing host: {test_url}")
 
         # 浏览器 UA，避免被服务器拒绝
@@ -189,7 +187,8 @@ class HostResolver:
             return {"valid": False, "error": str(e), "latency": -1}
 
     async def resolve_host(self, host: str, port: int, path: str = "/") -> dict:
-        test_result = await self.test_host(host, port, path)
+        test_url = f"http://{host}:{port}{path}{TEST_CHANNEL_CODE}"
+        test_result = await self.test_host(test_url)
 
         ip = await self._resolve_to_ip(host)
         if ip:

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from database import get_db, init_db
 from models import Subscription, Host
 from services.url_parser import parse_all_sources
-from services.host_resolver import get_resolver
+from services.host_resolver import get_resolver, TEST_CHANNEL_CODE
 from config import settings, timestamp_shanghai
 
 # 配置控制台日志
@@ -226,24 +226,14 @@ async def delete_host(host_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/hosts/{host_id}/test-delay")
 async def test_host_delay(host_id: int, db: Session = Depends(get_db)):
-    from urllib.parse import urlparse
     host = db.query(Host).filter(Host.id == host_id).first()
     if not host:
         raise HTTPException(status_code=404, detail="Host not found")
 
-    host_part = host.host.rsplit(":", 1)
-    if len(host_part) == 2:
-        h, p = host_part
-        port = int(p)
-    else:
-        return success_response(data={"delay": -1, "updatedAt": host.updated_at}, msg="主机格式错误")
-
-    # 从 full_path 中提取路径部分
-    parsed = urlparse(host.full_path)
-    path = parsed.path if parsed.path else "/"
-
     resolver = get_resolver()
-    result = await resolver.test_host(h, port, path)
+    # 直接从 full_path 拼接 TEST_CHANNEL_CODE
+    test_url = f"{host.full_path.rstrip('/')}/{TEST_CHANNEL_CODE}"
+    result = await resolver.test_host(test_url)
     latency = result.get("latency", -1)
 
     host.latency = latency
