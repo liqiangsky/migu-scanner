@@ -93,6 +93,13 @@ class HostResolver:
     async def test_host(self, test_url: str) -> dict:
         logger.debug(f"Testing host: {test_url}")
 
+        # 提取 host:port 用于日志
+        from urllib.parse import urlparse
+        parsed = urlparse(test_url)
+        host_port = parsed.hostname
+        if parsed.port:
+            host_port = f"{parsed.hostname}:{parsed.port}"
+
         # 浏览器 UA，避免被服务器拒绝
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -116,7 +123,7 @@ class HostResolver:
                         if resp.status in (301, 302, 303, 307, 308):
                             location = resp.headers.get('Location', '')
                             if not location:
-                                logger.warning(f"Host {host}:{port} redirect without Location at step {i+1}")
+                                logger.warning(f"Host {host_port} redirect without Location at step {i+1}")
                                 return {"valid": False, "error": "Redirect without Location", "latency": -1}
 
                             # 检查是否是视频URL（满足任一条件即可）
@@ -128,7 +135,7 @@ class HostResolver:
                                 'miguvideo' in loc_lower
                             )
                             if is_video_url:
-                                logger.info(f"Host {host}:{port} resolved to video URL after {i+1} redirects, latency: {latency}ms")
+                                logger.info(f"Host {host_port} resolved to video URL after {i+1} redirects, latency: {latency}ms")
                                 return {"valid": True, "error": "", "latency": latency}
 
                             # 继续跟随重定向
@@ -144,7 +151,7 @@ class HostResolver:
 
                             # 检查状态码
                             if resp.status != 200:
-                                logger.warning(f"Host {host}:{port} returned status {resp.status}")
+                                logger.warning(f"Host {host_port} returned status {resp.status}")
                                 return {"valid": False, "error": f"HTTP {resp.status}", "latency": -1}
 
                             # 尝试多种编码解码
@@ -161,29 +168,29 @@ class HostResolver:
 
                             # JSON 响应直接无效
                             if 'json' in content_type or (body.strip().startswith('{') and body.strip().endswith('}')):
-                                logger.warning(f"Host {host}:{port} returned JSON, invalid")
+                                logger.warning(f"Host {host_port} returned JSON, invalid")
                                 return {"valid": False, "error": "JSON response", "latency": -1}
 
                             # TXT 内容：检查是否包含 miguvideo URL
                             if 'miguvideo' in body.lower():
-                                logger.info(f"Host {host}:{port} validation passed (miguvideo found), latency: {latency}ms")
+                                logger.info(f"Host {host_port} validation passed (miguvideo found), latency: {latency}ms")
                                 return {"valid": True, "error": "", "latency": latency}
                             else:
-                                logger.warning(f"Host {host}:{port} returned txt but no miguvideo URL: {body[:100]}")
+                                logger.warning(f"Host {host_port} returned txt but no miguvideo URL: {body[:100]}")
                                 return {"valid": False, "error": "No miguvideo in response", "latency": -1}
 
                 # 超过最大重定向次数
-                logger.warning(f"Host {host}:{port} too many redirects ({max_redirects})")
+                logger.warning(f"Host {host_port} too many redirects ({max_redirects})")
                 return {"valid": False, "error": "Too many redirects", "latency": -1}
 
         except asyncio.TimeoutError:
-            logger.warning(f"Host {host}:{port} channel request timeout")
+            logger.warning(f"Host {host_port} channel request timeout")
             return {"valid": False, "error": "Channel timeout", "latency": -1}
         except aiohttp.ClientResponseError as e:
-            logger.warning(f"Host {host}:{port} non-standard response: {e}")
+            logger.warning(f"Host {host_port} non-standard response: {e}")
             return {"valid": False, "error": str(e), "latency": -1}
         except Exception as e:
-            logger.error(f"Host {host}:{port} channel request error: {e}")
+            logger.error(f"Host {host_port} channel request error: {e}")
             return {"valid": False, "error": str(e), "latency": -1}
 
     async def resolve_host(self, host: str, port: int, path: str = "/") -> dict:
