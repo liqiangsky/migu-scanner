@@ -226,6 +226,7 @@ async def delete_host(host_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/hosts/{host_id}/test-delay")
 async def test_host_delay(host_id: int, db: Session = Depends(get_db)):
+    from urllib.parse import urlparse
     host = db.query(Host).filter(Host.id == host_id).first()
     if not host:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -237,8 +238,12 @@ async def test_host_delay(host_id: int, db: Session = Depends(get_db)):
     else:
         return success_response(data={"delay": -1, "updatedAt": host.updated_at}, msg="主机格式错误")
 
+    # 从 full_path 中提取路径部分
+    parsed = urlparse(host.full_path)
+    path = parsed.path if parsed.path else "/"
+
     resolver = get_resolver()
-    result = await resolver.test_host(h, port, host.full_path)
+    result = await resolver.test_host(h, port, path)
     latency = result.get("latency", -1)
 
     host.latency = latency
