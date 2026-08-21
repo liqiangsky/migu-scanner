@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        BASE_REGISTRY: ${BASE_REGISTRY:-docker.io}
+        REGISTRY_MIRROR: ${REGISTRY_MIRROR:-}
+        APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
+    ports:
+      - "1847:2847"
+    volumes:
+      - ./backend/data:/app/data
+    environment:
+      - MIGU_REQUEST_TIMEOUT=30
+    restart: unless-stopped
+    networks:
+      - migu-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        BASE_REGISTRY: ${BASE_REGISTRY:-docker.io}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - migu-network
+
+networks:
+  migu-network:
+    driver: bridge

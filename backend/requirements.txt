@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+sqlalchemy
+aiohttp
+pydantic
+pydantic-settings
+schedule
+python-multipart
+py-ip2region
