@@ -1,47 +1,45 @@
 <template>
-  <div class="app-wrapper">
-    <!-- 页面内容 -->
-    <div class="page-wrapper">
-      <router-view />
-    </div>
+  <!-- 页面内容 -->
+  <router-view />
 
-    <!-- 底部导航 -->
-    <nav class="bottom-tabbar">
+  <!-- 底部导航 -->
+  <nav class="bottom-tabbar">
+      <router-link to="/hosts" class="tab-item" active-class="active" exact-active-class="active">
+        <span class="material-symbols-outlined tab-icon">tv</span>
+        <span class="tab-text">主机</span>
+      </router-link>
+
       <router-link to="/subscriptions" class="tab-item" active-class="active" exact-active-class="active">
-        <span class="material-symbols-outlined tab-icon">subscriptions</span>
+        <span class="material-symbols-outlined tab-icon">rss_feed</span>
         <span class="tab-text">订阅</span>
       </router-link>
 
-      <router-link to="/hosts" class="tab-item" active-class="active" exact-active-class="active">
-        <span class="material-symbols-outlined tab-icon">dns</span>
-        <span class="tab-text">主机</span>
+      <router-link to="/channels" class="tab-item" active-class="active" exact-active-class="active">
+        <span class="material-symbols-outlined tab-icon">live_tv</span>
+        <span class="tab-text">频道</span>
       </router-link>
     </nav>
-  </div>
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
+import { connect, disconnect } from '@/composables/useNotifications'
 
-// 全局错误处理
 onMounted(() => {
+  // 全局 SSE 连接（只连接一次）
+  connect()
+
   window.addEventListener('error', (e) => {
     console.error('Global error:', e)
   })
 })
+
+onUnmounted(() => {
+  disconnect()
+})
 </script>
 
 <style scoped>
-.app-wrapper {
-  min-height: 100vh;
-  background: var(--bg-page);
-  padding-bottom: calc(80px + env(safe-area-inset-bottom));
-}
-
-.page-wrapper {
-  min-height: 100vh;
-}
-
 /* ===== 底部 TabBar（iOS 悬浮药丸风格）===== */
 .bottom-tabbar {
   position: fixed;

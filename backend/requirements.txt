@@ -7,3 +7,4 @@ pydantic-settings
 schedule
 python-multipart
 py-ip2region
+requests

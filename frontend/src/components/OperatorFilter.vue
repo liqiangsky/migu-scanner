@@ -23,7 +23,7 @@ const ispList = ref([])
 
 onMounted(async () => {
   try {
-    const res = await request.get('/api/hosts/filters')
+    const res = await request.get('/hosts/filters')
     ispList.value = res?.isps || []
   } catch (e) {
     console.error('获取运营商列表失败:', e)

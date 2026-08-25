@@ -138,14 +138,18 @@ const formatTime = (timestamp) => {
 
 const loadSubscriptions = async () => {
   try {
-    const data = await request.get('/api/subscriptions')
+    const data = await request.get('/subscriptions')
     subscriptions.value = data || []
   } catch (e) {
-    toast.error('加载订阅失败')
+    // 错误已由拦截器处理
   } finally {
     loaded.value = true
   }
 }
+
+onMounted(() => {
+  loadSubscriptions()
+})
 
 const startAddSub = () => {
   editingId.value = null
@@ -176,17 +180,17 @@ const handleSaveSub = async () => {
   saving.value = true
   try {
     if (editingId.value) {
-      await request.put(`/api/subscriptions/${editingId.value}`, formData.value)
+      await request.put(`/subscriptions/${editingId.value}`, formData.value)
       toast.success('已更新')
     } else {
-      await request.post('/api/subscriptions', formData.value)
+      await request.post('/subscriptions', formData.value)
       toast.success('已添加')
     }
     formVisible.value = false
     editingId.value = null
     await loadSubscriptions()
   } catch (e) {
-    toast.error(e.response?.data?.detail || '操作失败')
+    // 错误已由拦截器处理
   } finally {
     saving.value = false
   }
@@ -195,38 +199,35 @@ const handleSaveSub = async () => {
 const handleDeleteSub = async (sub) => {
   if (!confirm(`确定删除订阅「${sub.name || sub.url}」？`)) return
   try {
-    await request.delete(`/api/subscriptions/${sub.id}`)
+    await request.delete(`/subscriptions/${sub.id}`)
     toast.success('已删除')
     await loadSubscriptions()
   } catch (e) {
-    toast.error('删除失败')
+    // 错误已由拦截器处理
   }
 }
 
 const handleToggleEnabled = async (sub) => {
   const wasEnabled = sub.enabled
   try {
-    await request.put(`/api/subscriptions/${sub.id}`, {
+    await request.put(`/subscriptions/${sub.id}`, {
       ...sub,
       enabled: !wasEnabled
     })
     toast.success(wasEnabled ? '已停用' : '已启用')
     await loadSubscriptions()
   } catch (e) {
-    toast.error('更新失败')
+    // 错误已由拦截器处理
   }
 }
 
 const fetchAll = async () => {
   fetchingAll.value = true
   try {
-    await request.post('/api/subscriptions/fetch-all')
+    await request.post('/subscriptions/fetch-all')
     toast.success('批量拉取已启动')
-    setTimeout(() => {
-      loadSubscriptions()
-    }, 3000)
   } catch (e) {
-    toast.error('批量拉取失败')
+    // 错误已由拦截器处理
   } finally {
     fetchingAll.value = false
   }
@@ -235,21 +236,15 @@ const fetchAll = async () => {
 const handleFetchSub = async (sub) => {
   fetchingMap.value[sub.id] = true
   try {
-    await request.post(`/api/subscriptions/${sub.id}/fetch`)
+    await request.post(`/subscriptions/${sub.id}/fetch`)
     toast.success('拉取已启动')
-    setTimeout(() => {
-      loadSubscriptions()
-    }, 3000)
   } catch (e) {
-    toast.error('拉取失败')
+    // 错误已由拦截器处理
   } finally {
     fetchingMap.value[sub.id] = false
   }
 }
 
-onMounted(() => {
-  loadSubscriptions()
-})
 </script>
 
 <style scoped>
@@ -284,7 +279,7 @@ onMounted(() => {
 
 .header-actions {
   display: flex;
-  gap: 4px;
+  gap: 8px;
 }
 
 /* ===== 页头间距 ===== */
@@ -663,13 +658,6 @@ input:checked + .slider:before {
 .list-fade-leave-to {
   opacity: 0;
   transform: translateY(-10px);
-}
-
-
-.section-divider {
-  height: 1px;
-  background: var(--bg-neutral);
-  margin: 24px 0;
 }
 
 /* ===== 空状态 ===== */

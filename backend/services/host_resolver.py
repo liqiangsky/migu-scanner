@@ -5,7 +5,7 @@ import os
 import threading
 import ipaddress
 import logging
-from typing import Optional, Tuple
+from typing import Optional
 from config import settings
 
 import ip2region.searcher as xdb_searcher

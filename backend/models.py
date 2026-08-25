@@ -25,3 +25,35 @@ class Host(Base):
     latency = Column(Float, default=None)
     created_at = Column(Integer, default=0)
     updated_at = Column(Integer, default=0)
+
+
+class ChannelGroup(Base):
+    __tablename__ = "channel_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False, index=True)
+    sort_order = Column(Integer, default=0)
+    visible = Column(Boolean, default=True)
+    created_at = Column(Integer, default=0)
+
+
+class Channel(Base):
+    __tablename__ = "channels"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, default="")
+    code = Column(String, unique=True, nullable=False, index=True)  # 9位数字CODE
+    logo_name = Column(String, default="")  # 台标文件名（不含扩展名）
+    group_id = Column(Integer, nullable=False, default=0)
+    created_at = Column(Integer, default=0)
+
+
+class ChannelPlayUrl(Base):
+    __tablename__ = "channel_play_urls"
+
+    id = Column(Integer, primary_key=True, index=True)
+    channel_code = Column(String, unique=True, nullable=False, index=True)
+    play_url = Column(String, nullable=False)
+    ttl = Column(Integer, nullable=False, default=0)  # 过期时间戳
+    created_at = Column(Integer, default=0)
+

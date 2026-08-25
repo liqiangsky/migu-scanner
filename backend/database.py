@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from config import settings
@@ -24,15 +24,5 @@ def get_db():
 
 
 def init_db():
-    """初始化数据库，删除旧表并重建"""
-    conn = engine.connect()
-    
-    # 删除旧表
-    conn.execute(text("DROP TABLE IF EXISTS hosts"))
-    conn.execute(text("DROP TABLE IF EXISTS subscriptions"))
-    conn.commit()
-    
-    # 创建新表
+    """创建所有表（如果不存在）"""
     Base.metadata.create_all(bind=engine)
-    
-    print("Database tables recreated")

@@ -10,11 +10,6 @@ except ImportError:
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
-def now_shanghai() -> datetime:
-    """获取上海时区的当前时间"""
-    return datetime.now(SHANGHAI_TZ)
-
-
 def timestamp_shanghai() -> int:
     """获取上海时区的当前时间戳"""
     return int(datetime.now(SHANGHAI_TZ).timestamp())
@@ -30,6 +25,10 @@ class Settings(BaseSettings):
     # 超时配置
     request_timeout: int = 30
     latency_timeout: int = 5
+
+    # 播放代理配置
+    playback_request_timeout: int = 10  # 单个主机尝试超时（秒）
+    playback_cache_ttl: int = 18000  # 播放URL缓存时间（秒），默认5小时
 
     class Config:
         env_prefix = "MIGU_"

@@ -109,6 +109,7 @@ import request from '@/api'
 import { toast } from '@/components/Toast'
 import RegionFilter from '@/components/RegionFilter.vue'
 import OperatorFilter from '@/components/OperatorFilter.vue'
+import { copyText } from '@/utils/copy'
 
 const hosts = ref([])
 const selectedProvince = ref('')
@@ -139,7 +140,7 @@ const loadHosts = async (reset = false) => {
     if (selectedProvince.value) params.province = selectedProvince.value
     if (selectedIsp.value) params.isp = selectedIsp.value
 
-    const data = await request.get('/api/hosts', { params })
+    const data = await request.get('/hosts', { params })
     if (reset) {
       hosts.value = data.items || []
     } else {
@@ -148,7 +149,7 @@ const loadHosts = async (reset = false) => {
     totalCount.value = data.total || 0
     totalPages.value = data.totalPages || 1
   } catch (e) {
-    toast.error('加载主机列表失败')
+    // 错误已由拦截器处理
   } finally {
     loading.value = false
   }
@@ -166,57 +167,24 @@ const handleFilterChange = () => {
 }
 
 const handleCopy = async (host) => {
-  // 直接复制 full_path
   const url = host.full_path || `http://${host.host}/`
-  let ok = false
-  // 方式1: 现代 Clipboard API（需要 HTTPS 或 localhost）
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(url)
-      ok = true
-    } catch {
-      // fallthrough
-    }
-  }
-  // 方式2: 传统 execCommand（兼容 HTTP）
-  if (!ok) {
-    const textarea = document.createElement('textarea')
-    textarea.value = url
-    textarea.style.position = 'fixed'
-    textarea.style.opacity = '0'
-    textarea.style.pointerEvents = 'none'
-    document.body.appendChild(textarea)
-    try {
-      textarea.select()
-      document.execCommand('copy')
-      ok = true
-    } catch {
-      ok = false
-    } finally {
-      document.body.removeChild(textarea)
-    }
-  }
-  if (ok) {
-    toast.success(`已复制: ${url}`)
-  } else {
-    toast.error('复制失败')
-  }
+  await copyText(url, toast)
 }
 
 const handleDelete = async (host) => {
   if (!confirm(`确定删除主机 ${host.host}？`)) return
   try {
-    await request.delete(`/api/hosts/${host.id}`)
+    await request.delete(`/hosts/${host.id}`)
     toast.success('已删除')
     await loadHosts(true)
   } catch (e) {
-    toast.error('删除失败')
+    // 错误已由拦截器处理
   }
 }
 
 const handleTestDelay = async (host) => {
   try {
-    const res = await request.post(`/api/hosts/${host.id}/test-delay`)
+    const res = await request.post(`/hosts/${host.id}/test-delay`)
     if (res) {
       host.latency = res.delay
       host.updatedAt = res.updatedAt

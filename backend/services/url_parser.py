@@ -2,7 +2,7 @@ import re
 import asyncio
 import aiohttp
 import logging
-from typing import List, Set, Tuple, Optional, Callable
+from typing import List, Set, Optional, Callable
 from config import settings
 
 logger = logging.getLogger("migu.parser")

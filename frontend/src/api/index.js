@@ -1,8 +1,9 @@
 import axios from 'axios'
 import { toast } from '@/components/Toast'
+import { baseURL } from '@/constant.js'
 
 const request = axios.create({
-  baseURL: '',
+  baseURL: baseURL,
   timeout: 30000
 })
 
@@ -25,11 +26,18 @@ request.interceptors.response.use(
     if (res && res.code === 200) {
       return res.data
     }
-    return res
+    // code 非 200，显示错误 toast 并返回错误
+    toast.error(res?.msg || '请求失败')
+    const error = new Error(res?.msg)
+    error.response = { data: res }
+    return Promise.reject(error)
   },
   error => {
-    const message = error.response?.data?.detail || error.message || '请求失败'
-    toast.error(message)
+    // 只有网络错误（没有 response.data.msg）时才显示 toast
+    if (!error.response?.data?.msg) {
+      const message = error.message || '请求失败'
+      toast.error(message)
+    }
     return Promise.reject(error)
   }
 )
