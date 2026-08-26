@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from models import Host, ChannelPlayUrl
+from database import db_write_lock
 
 logger = logging.getLogger("migu.playback")
 
@@ -75,13 +76,15 @@ def _save_play_url(db: Session, channel_code: str, play_url: str):
         existing.play_url = play_url
         existing.ttl = ttl
     else:
-        db.add(ChannelPlayUrl(
-            channel_code=channel_code,
-            play_url=play_url,
-            ttl=ttl,
-            created_at=int(time.time())
-        ))
-    db.commit()
+        with db_write_lock:
+            db.add(ChannelPlayUrl(
+                channel_code=channel_code,
+                play_url=play_url,
+                ttl=ttl,
+                created_at=int(time.time())
+            ))
+    with db_write_lock:
+        db.commit()
     logger.debug(f"频道 {channel_code} 播放URL已缓存，TTL={settings.playback_cache_ttl}s")
 
 

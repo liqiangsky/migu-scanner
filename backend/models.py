@@ -18,7 +18,7 @@ class Host(Base):
     __tablename__ = "hosts"
 
     id = Column(Integer, primary_key=True, index=True)
-    host = Column(String, nullable=False, index=True)
+    host = Column(String, nullable=False, unique=True, index=True)
     full_path = Column(String, default="/")
     province = Column(String, default="")
     isp = Column(String, default="")

@@ -7,9 +7,9 @@ from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, exc
 
-from database import get_db, init_db, SessionLocal
+from database import get_db, init_db, SessionLocal, check_integrity, db_write_lock
 from models import Subscription, Host, ChannelGroup, Channel, ChannelPlayUrl
 from services.notification_service import create_notification, MSG_TYPE_SUCCESS, MSG_TYPE_ERROR
 from services.url_parser import parse_all_sources
@@ -44,6 +44,14 @@ app.add_middleware(
 async def startup_event():
     init_db()
     logger.info("=== 服务器启动 ===")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """优雅关闭：清理数据库连接"""
+    from services.event_bus import event_bus
+    event_bus.clear_all()
+    logger.info("=== 服务器关闭 ===")
 
 
 # 自定义错误码
@@ -89,6 +97,27 @@ async def http_exception_handler(request, exc):
     )
 
 
+@app.exception_handler(Exception)
+async def sqlite_corrupt_handler(request, exc):
+    """全局异常处理：检测并友好处理 SQLite 损坏错误"""
+    msg = str(exc)
+    if "CORRUPT" in msg or "malformed" in msg.lower() or "database disk image is malformed" in msg.lower():
+        logger.error(f"检测到数据库损坏: {msg}")
+        return JSONResponse(
+            status_code=200,
+            content=error_response(
+                msg="数据库损坏，正在尝试恢复...请稍后再试。如有需要请联系管理员。",
+                code=ErrorCode.SERVER_ERROR
+            )
+        )
+    # 其他未处理异常
+    logger.error(f"未处理异常: {msg}", exc_info=True)
+    return JSONResponse(
+        status_code=200,
+        content=error_response(msg="服务器内部错误", code=ErrorCode.SERVER_ERROR)
+    )
+
+
 # ============ 订阅管理 API ============
 
 @app.get("/subscriptions")
@@ -131,7 +160,8 @@ async def add_subscription(body: SubscriptionCreate, db: Session = Depends(get_d
         fetch_cron=body.fetch_cron.strip(), created_at=now, updated_at=now
     )
     db.add(source)
-    db.commit()
+    with db_write_lock:
+        db.commit()
     logger.info(f"添加订阅成功: ID={source.id}, name='{body.name}', url='{url}'")
     return success_response(data={"id": source.id}, msg="添加成功")
 
@@ -155,7 +185,8 @@ async def update_subscription(subscription_id: int, body: SubscriptionUpdate, db
     if body.fetch_cron is not None:
         subscription.fetch_cron = body.fetch_cron.strip()
     subscription.updated_at = timestamp_shanghai()
-    db.commit()
+    with db_write_lock:
+        db.commit()
     logger.info(f"更新订阅成功: ID={subscription_id}")
     return success_response(msg="更新成功")
 
@@ -166,8 +197,9 @@ async def delete_subscription(subscription_id: int, db: Session = Depends(get_db
     if not subscription:
         raise BusinessException("订阅不存在", ErrorCode.NOT_FOUND)
     logger.info(f"删除订阅: ID={subscription_id}, url={subscription.url}")
-    db.delete(subscription)
-    db.commit()
+    with db_write_lock:
+        db.delete(subscription)
+        db.commit()
     logger.info(f"删除订阅成功: ID={subscription_id}")
     return success_response(msg="删除成功")
 
@@ -232,8 +264,9 @@ async def delete_host(host_id: int, db: Session = Depends(get_db)):
     if not host:
         raise BusinessException("主机不存在", ErrorCode.NOT_FOUND)
     logger.info(f"删除主机: ID={host_id}, host={host.host}")
-    db.delete(host)
-    db.commit()
+    with db_write_lock:
+        db.delete(host)
+        db.commit()
     logger.info(f"删除主机成功: ID={host_id}")
     return success_response(msg="删除成功")
 
@@ -252,7 +285,8 @@ async def test_host_delay(host_id: int, db: Session = Depends(get_db)):
 
     host.latency = latency
     host.updated_at = timestamp_shanghai()
-    db.commit()
+    with db_write_lock:
+        db.commit()
 
     return success_response(data={
         "delay": latency,
@@ -262,12 +296,18 @@ async def test_host_delay(host_id: int, db: Session = Depends(get_db)):
 
 # ============ 拉取 API ============
 
-async def _pull_subscription(subscription, db: Session):
-    """核心拉取逻辑，供单订阅和批量拉取复用。"""
+async def _pull_subscription(subscription_id: int):
+    """核心拉取逻辑，供单订阅和批量拉取复用。使用独立 DB session。"""
     added = 0
     skipped = 0
     errors = []
+    # 后台任务使用独立 session，不依赖请求级 session
+    db = SessionLocal()
     try:
+        subscription = db.query(Subscription).filter(Subscription.id == subscription_id).first()
+        if not subscription:
+            logger.error(f"拉取任务找不到订阅 ID={subscription_id}")
+            return
         source_list = [{"url": subscription.url, "enabled": True, "name": subscription.name}]
         logger.info(f"开始解析订阅源: {subscription.url}")
 
@@ -275,6 +315,7 @@ async def _pull_subscription(subscription, db: Session):
         logger.info(f"解析完成，共发现 {len(hosts)} 个唯一 URL")
 
         resolver = get_resolver()
+        hosts_to_add = []
         for i, url in enumerate(hosts):
             match = re.match(r"https?://(?P<HOST>[^/]+)(?P<PATH>/.*?)(?<!\d)(?P<CODE>\d{9})(?=[#$]|$)", url)
             if not match:
@@ -312,7 +353,7 @@ async def _pull_subscription(subscription, db: Session):
                     isp=info["isp"], latency=info.get("latency"),
                     created_at=now, updated_at=now
                 )
-                db.add(new_host)
+                hosts_to_add.append(new_host)
                 added += 1
                 logger.info(f"验证通过: {host}:{port}, 省份={info['province']}, ISP={info['isp']}")
             except Exception as e:
@@ -320,30 +361,39 @@ async def _pull_subscription(subscription, db: Session):
                 logger.error(f"验证失败: {host}:{port} - {e}", exc_info=True)
 
         subscription.updated_at = timestamp_shanghai()
-        db.commit()
-        logger.info(f"拉取完成: 新增 {added} 个 HOST, 跳过 {skipped} 个, 错误 {len(errors)} 个")
+        # 批量写入，使用写锁保护整个事务
+        duplicate_count = 0
+        with db_write_lock:
+            for h in hosts_to_add:
+                db.add(h)
+            try:
+                db.commit()
+            except exc.IntegrityError:
+                db.rollback()
+                duplicate_count = len(hosts_to_add)
+                logger.warning(f"插入 host 时遇到重复数据，跳过 {duplicate_count} 条")
+        logger.info(f"拉取完成: 新增 {added} 个 HOST, 跳过 {skipped + duplicate_count} 个, 错误 {len(errors)} 个")
 
         if added > 0 or skipped > 0:
-            notif_db = SessionLocal()
-            try:
-                create_notification(notif_db, MSG_TYPE_SUCCESS,
+            with db_write_lock:
+                create_notification(db, MSG_TYPE_SUCCESS,
                     f"订阅拉取完成: {subscription.name or subscription.url}",
                     f"新增 {added} 个主机，跳过 {skipped} 个",
                     "订阅管理"
                 )
-            finally:
-                notif_db.close()
     except Exception as e:
         logger.error(f"拉取过程发生严重错误: {e}", exc_info=True)
-        notif_db = SessionLocal()
         try:
-            create_notification(notif_db, MSG_TYPE_ERROR,
-                f"订阅拉取失败: {subscription.name or subscription.url}",
-                str(e),
-                "订阅管理"
-            )
-        finally:
-            notif_db.close()
+            with db_write_lock:
+                create_notification(db, MSG_TYPE_ERROR,
+                    f"订阅拉取失败: {subscription.name or subscription.url}",
+                    str(e),
+                    "订阅管理"
+                )
+        except Exception as notif_e:
+            logger.error(f"发送通知失败: {notif_e}")
+    finally:
+        db.close()
 
 
 @app.post("/subscriptions/{subscription_id}/fetch")
@@ -352,7 +402,7 @@ async def fetch_subscription(subscription_id: int, db: Session = Depends(get_db)
     if not subscription:
         raise BusinessException("订阅不存在", ErrorCode.NOT_FOUND)
 
-    asyncio.create_task(_pull_subscription(subscription, db))
+    asyncio.create_task(_pull_subscription(subscription_id))
     return success_response(msg="拉取任务已启动")
 
 
@@ -364,7 +414,7 @@ async def fetch_all_subscriptions(db: Session = Depends(get_db)):
         return success_response(data=None, msg="没有启用的订阅")
 
     for subscription in sources:
-        asyncio.create_task(_pull_subscription(subscription, db))
+        asyncio.create_task(_pull_subscription(subscription.id))
 
     return success_response(msg=f"已启动 {len(sources)} 个拉取任务")
 
@@ -463,7 +513,8 @@ async def create_channel_group(body: ChannelGroupCreate, db: Session = Depends(g
     max_sort = db.query(func.max(ChannelGroup.sort_order)).scalar() or 0
     group = ChannelGroup(name=name, created_at=now, sort_order=max_sort + 1, visible=True)
     db.add(group)
-    db.commit()
+    with db_write_lock:
+        db.commit()
     db.refresh(group)
     return success_response(data={"id": group.id, "name": group.name}, msg="创建成功")
 
@@ -483,7 +534,8 @@ async def update_channel_group(group_id: int, body: ChannelGroupUpdate, db: Sess
     if existing:
         raise BusinessException("分组名称已存在", ErrorCode.DUPLICATE)
     group.name = name
-    db.commit()
+    with db_write_lock:
+        db.commit()
     return success_response(msg="更新成功")
 
 
@@ -494,9 +546,10 @@ async def delete_channel_group(group_id: int, db: Session = Depends(get_db)):
     if not group:
         raise BusinessException("分组不存在", ErrorCode.NOT_FOUND)
     # 将该分组下的所有频道移入"未分组"(group_id=0)
-    db.query(Channel).filter(Channel.group_id == group_id).update({"group_id": 0})
-    db.delete(group)
-    db.commit()
+    with db_write_lock:
+        db.query(Channel).filter(Channel.group_id == group_id).update({"group_id": 0})
+        db.delete(group)
+        db.commit()
     return success_response(msg="删除成功")
 
 
@@ -512,7 +565,8 @@ async def move_group_up(group_id: int, db: Session = Depends(get_db)):
         return success_response()
     prev_group = groups[idx - 1]
     prev_group.sort_order, group.sort_order = group.sort_order, prev_group.sort_order
-    db.commit()
+    with db_write_lock:
+        db.commit()
     return success_response(msg="上移成功")
 
 
@@ -528,7 +582,8 @@ async def move_group_down(group_id: int, db: Session = Depends(get_db)):
         return success_response()
     next_group = groups[idx + 1]
     next_group.sort_order, group.sort_order = group.sort_order, next_group.sort_order
-    db.commit()
+    with db_write_lock:
+        db.commit()
     return success_response(msg="下移成功")
 
 
@@ -539,7 +594,8 @@ async def toggle_group_visible(group_id: int, db: Session = Depends(get_db)):
     if not group:
         raise BusinessException("分组不存在", ErrorCode.NOT_FOUND)
     group.visible = not group.visible
-    db.commit()
+    with db_write_lock:
+        db.commit()
     return success_response(data={"visible": group.visible}, msg="已更新")
 
 
@@ -604,7 +660,8 @@ async def batch_import_channels(body: ChannelBatchImport, db: Session = Depends(
         existing_codes.add(code)
         added_channels += 1
 
-    db.commit()
+    with db_write_lock:
+        db.commit()
 
     msg = f"导入成功 {added_channels} 个频道"
     if skipped_codes:
@@ -687,7 +744,8 @@ async def batch_delete_channels(body: BatchDeleteChannels, db: Session = Depends
         raise BusinessException("请选择要删除的频道", ErrorCode.PARAM_ERROR)
 
     count = db.query(Channel).filter(Channel.id.in_(body.channel_ids)).delete()
-    db.commit()
+    with db_write_lock:
+        db.commit()
     logger.info(f"批量删除频道完成: 删除{count}个")
     return success_response(data={"deleted": count}, msg=f"已删除 {count} 个频道")
 
@@ -711,7 +769,8 @@ async def batch_update_channel_group(body: BatchGroupUpdate, db: Session = Depen
         group_name = group.name
 
     db.query(Channel).filter(Channel.id.in_(body.channel_ids)).update({"group_id": body.group_id})
-    db.commit()
+    with db_write_lock:
+        db.commit()
     return success_response(data={"updated": len(body.channel_ids)}, msg=f"已将 {len(body.channel_ids)} 个频道移动到「{group_name}」")
 
 
@@ -721,8 +780,9 @@ async def delete_channel(channel_id: int, db: Session = Depends(get_db)):
     channel = db.query(Channel).filter(Channel.id == channel_id).first()
     if not channel:
         raise BusinessException("频道不存在", ErrorCode.NOT_FOUND)
-    db.delete(channel)
-    db.commit()
+    with db_write_lock:
+        db.delete(channel)
+        db.commit()
     return success_response(msg="删除成功")
 
 
@@ -761,7 +821,8 @@ async def create_channel(body: ChannelCreate, db: Session = Depends(get_db)):
         created_at=now,
     )
     db.add(new_channel)
-    db.commit()
+    with db_write_lock:
+        db.commit()
     db.refresh(new_channel)
     return success_response(data={
         "id": new_channel.id,
@@ -799,7 +860,8 @@ async def update_channel(channel_id: int, body: ChannelUpdate, db: Session = Dep
     if body.group_id is not None:
         channel.group_id = body.group_id
 
-    db.commit()
+    with db_write_lock:
+        db.commit()
     db.refresh(channel)
     return success_response(data={
         "id": channel.id,
