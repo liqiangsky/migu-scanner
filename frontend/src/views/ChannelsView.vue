@@ -13,6 +13,9 @@
         <button class="action-btn primary-btn" @click="openGroupModal" title="管理分组">
           <span class="material-symbols-outlined icon-g-btn">folder_managed</span>
         </button>
+        <button class="action-btn primary-btn" @click="openBatchGroupModal" title="批量分组">
+          <span class="material-symbols-outlined icon-g-btn">batch_prediction</span>
+        </button>
         <button class="action-btn primary-btn" @click="openUrlModal" title="订阅地址">
           <span class="material-symbols-outlined icon-g-btn">link</span>
         </button>
@@ -263,6 +266,64 @@
               </template>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 批量分组弹窗 -->
+    <div class="modal-overlay" v-if="showBatchGroupModal" @click="closeBatchGroupModal">
+      <div class="import-modal channel-modal" @click.stop>
+        <div class="modal-handle"></div>
+        <div class="modal-header">
+          <h2 class="modal-title">批量分组</h2>
+          <button class="modal-close-btn" @click="closeBatchGroupModal">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <!-- 选择分组 -->
+          <div class="form-item">
+            <label>目标分组</label>
+            <select v-model="batchGroupTarget">
+              <option :value="0">未分组</option>
+              <option v-for="g in channelGroups" :key="g.id" :value="g.id">{{ g.name }}</option>
+            </select>
+          </div>
+          <!-- 频道列表 -->
+          <div class="batch-group-list">
+            <div v-if="allChannels.length === 0" class="empty-batch">暂无频道</div>
+            <div
+              v-for="ch in allChannels"
+              :key="ch.id"
+              class="batch-channel-item"
+              :class="{ selected: selectedChannelIds.includes(ch.id) }"
+              @click="toggleChannel(ch.id)"
+            >
+              <span class="batch-checkbox-custom" :class="{ checked: selectedChannelIds.includes(ch.id) }">
+                <span class="check-icon">✓</span>
+              </span>
+              <span class="batch-ch-name">{{ ch.name }}</span>
+              <span class="batch-ch-code mono">{{ ch.code }}</span>
+              <span class="batch-ch-group">{{ ch.groupName || '未分组' }}</span>
+            </div>
+          </div>
+          <!-- 全选/反选 -->
+          <div class="batch-select-actions">
+            <button class="select-all-btn" @click="selectAll">全选</button>
+            <button class="select-none-btn" @click="selectNone">全不选</button>
+            <button class="select-invert-btn" @click="invertSelection">反选</button>
+            <span class="selected-count">已选 {{ selectedChannelIds.length }} 个</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="back-btn" @click="closeBatchGroupModal">取消</button>
+          <button
+            class="confirm-import-btn"
+            :disabled="selectedChannelIds.length === 0 || batchGrouping"
+            @click="applyBatchGroup"
+          >
+            {{ batchGrouping ? '处理中...' : `应用到 ${selectedChannelIds.length} 个频道` }}
+          </button>
         </div>
       </div>
     </div>
@@ -864,6 +925,80 @@ const toggleGroupVisible = async (g) => {
     await loadChannels()
   } catch (e) {
     // 错误已由拦截器处理
+  }
+}
+
+// ===== 批量分组 =====
+const showBatchGroupModal = ref(false)
+const batchGroupTarget = ref(0)
+const selectedChannelIds = ref([])
+const batchGrouping = ref(false)
+
+// 扁平化的所有频道列表
+const allChannels = computed(() => {
+  const result = []
+  for (const group of channels.value) {
+    for (const ch of group.channels || []) {
+      result.push({
+        id: ch.id,
+        name: ch.name,
+        code: ch.code,
+        groupId: ch.groupId,
+        groupName: group.name || '未分组'
+      })
+    }
+  }
+  return result
+})
+
+const openBatchGroupModal = () => {
+  batchGroupTarget.value = 0
+  selectedChannelIds.value = []
+  showBatchGroupModal.value = true
+}
+
+const closeBatchGroupModal = () => {
+  showBatchGroupModal.value = false
+  selectedChannelIds.value = []
+}
+
+const selectAll = () => {
+  selectedChannelIds.value = allChannels.value.map(ch => ch.id)
+}
+
+const selectNone = () => {
+  selectedChannelIds.value = []
+}
+
+const invertSelection = () => {
+  const allIds = allChannels.value.map(ch => ch.id)
+  selectedChannelIds.value = allIds.filter(id => !selectedChannelIds.value.includes(id))
+}
+
+const toggleChannel = (id) => {
+  const idx = selectedChannelIds.value.indexOf(id)
+  if (idx >= 0) {
+    selectedChannelIds.value.splice(idx, 1)
+  } else {
+    selectedChannelIds.value.push(id)
+  }
+}
+
+const applyBatchGroup = async () => {
+  if (selectedChannelIds.value.length === 0) return
+  batchGrouping.value = true
+  try {
+    await request.post('/channels/batch-update-group', {
+      channel_ids: selectedChannelIds.value,
+      group_id: batchGroupTarget.value
+    })
+    toast.success(`已将 ${selectedChannelIds.value.length} 个频道移动到「${batchGroupTarget.value === 0 ? '未分组' : channelGroups.value.find(g => g.id === batchGroupTarget.value)?.name || '未知'}」`)
+    closeBatchGroupModal()
+    await loadChannels()
+  } catch (e) {
+    // 错误已由拦截器处理
+  } finally {
+    batchGrouping.value = false
   }
 }
 
@@ -2204,5 +2339,132 @@ onUnmounted(() => {
   flex: 1;
   word-break: break-all;
   line-height: 1.5;
+}
+
+/* ===== 批量分组弹窗 ===== */
+.batch-group-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--bg-neutral);
+  border-radius: var(--radius-input);
+  padding: 4px 8px 8px 0;
+}
+.batch-channel-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.batch-channel-item:hover {
+  background: var(--bg-neutral);
+}
+.batch-channel-item.selected {
+  background: rgba(0, 122, 255, 0.08);
+}
+.batch-checkbox-custom {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--text-disabled);
+  border-radius: 4px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.batch-checkbox-custom.checked {
+  background: var(--color-blue);
+  border-color: var(--color-blue);
+}
+.check-icon {
+  font-size: 12px;
+  color: #fff;
+  font-weight: bold;
+  line-height: 1;
+}
+.batch-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--color-blue);
+  flex-shrink: 0;
+}
+.batch-ch-name {
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-size: 12px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batch-ch-code {
+  font-size: 11px;
+  color: var(--color-blue);
+  font-family: var(--font-mono);
+  background: rgba(0, 122, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.batch-ch-group {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.batch-select-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.select-all-btn,
+.select-none-btn,
+.select-invert-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+.select-all-btn {
+  background: var(--bg-neutral);
+  color: var(--text-secondary);
+}
+.select-all-btn:hover {
+  background: #e8e8ed;
+}
+.select-none-btn {
+  background: var(--bg-neutral);
+  color: var(--text-secondary);
+}
+.select-none-btn:hover {
+  background: #e8e8ed;
+}
+.select-invert-btn {
+  background: var(--bg-neutral);
+  color: var(--text-secondary);
+}
+.select-invert-btn:hover {
+  background: #e8e8ed;
+}
+.selected-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+.empty-batch {
+  text-align: center;
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 </style>

@@ -613,6 +613,29 @@ async def batch_import_channels(body: ChannelBatchImport, db: Session = Depends(
     return success_response(data={"added": added_channels, "skipped": len(skipped_codes), "newGroups": len(created_groups)}, msg=msg)
 
 
+class BatchGroupUpdate(BaseModel):
+    channel_ids: list[int]
+    group_id: int
+
+
+@app.post("/channels/batch-update-group")
+async def batch_update_channel_group(body: BatchGroupUpdate, db: Session = Depends(get_db)):
+    """批量更新频道分组"""
+    if not body.channel_ids:
+        raise BusinessException("请选择要分组的频道", ErrorCode.PARAM_ERROR)
+
+    group_name = "未分组"
+    if body.group_id != 0:
+        group = db.query(ChannelGroup).filter(ChannelGroup.id == body.group_id).first()
+        if not group:
+            raise BusinessException("分组不存在", ErrorCode.NOT_FOUND)
+        group_name = group.name
+
+    db.query(Channel).filter(Channel.id.in_(body.channel_ids)).update({"group_id": body.group_id})
+    db.commit()
+    return success_response(data={"updated": len(body.channel_ids)}, msg=f"已将 {len(body.channel_ids)} 个频道移动到「{group_name}」")
+
+
 @app.delete("/channels/{channel_id}")
 async def delete_channel(channel_id: int, db: Session = Depends(get_db)):
     """删除频道"""
