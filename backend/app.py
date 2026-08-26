@@ -13,9 +13,12 @@ from database import get_db, init_db, SessionLocal
 from models import Subscription, Host, ChannelGroup, Channel, ChannelPlayUrl
 from services.notification_service import create_notification, MSG_TYPE_SUCCESS, MSG_TYPE_ERROR
 from services.url_parser import parse_all_sources
+from services.channel_parser import detect_and_parse, filter_migu_channels, extract_code
 from services.host_resolver import get_resolver, TEST_CHANNEL_CODE
 from services import playback_service
 from config import settings, timestamp_shanghai
+
+import requests
 
 # 配置控制台日志
 logging.basicConfig(
@@ -611,6 +614,82 @@ async def batch_import_channels(body: ChannelBatchImport, db: Session = Depends(
 
     logger.info(f"批量导入完成: 新增{added_channels}，跳过{len(skipped_codes)}，新建分组{len(created_groups)}")
     return success_response(data={"added": added_channels, "skipped": len(skipped_codes), "newGroups": len(created_groups)}, msg=msg)
+
+
+class ChannelBatchImportURL(BaseModel):
+    url: str
+
+
+@app.post("/channels/batch-import-preview")
+async def batch_import_preview(body: ChannelBatchImportURL, db: Session = Depends(get_db)):
+    """预览远程URL中的频道数据（不导入，仅返回解析结果）"""
+    url = body.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL不能为空")
+
+    # 确保 URL 有协议前缀
+    if not url.startswith(('http://', 'https://')):
+        url = 'http://' + url
+
+    try:
+        resp = requests.get(url, timeout=30, headers={'User-Agent': 'MiguManager/1.0'})
+        resp.raise_for_status()
+        content = resp.text
+    except requests.exceptions.RequestException as e:
+        logger.error(f"获取URL内容失败: {e}")
+        raise HTTPException(status_code=400, detail=f"获取URL内容失败: {e}")
+
+    # 解析内容
+    raw_channels = detect_and_parse(content, url)
+    channels = filter_migu_channels(raw_channels)
+
+    if not channels:
+        raise HTTPException(status_code=400, detail="未能从URL中解析到任何Migu频道数据")
+
+    # 去重
+    seen_codes = set()
+    dedup_channels = []
+    for ch in channels:
+        code = extract_code(ch['url'])
+        if code and code in seen_codes:
+            continue
+        if code:
+            seen_codes.add(code)
+        dedup_channels.append(ch)
+
+    # 构建分组结构
+    groups = {}
+    for ch in dedup_channels:
+        group_name = ch.get('group') or '未分组'
+        if group_name not in groups:
+            groups[group_name] = {'name': group_name, 'channels': []}
+        groups[group_name]['channels'].append(ch)
+
+    result = {
+        'channels': dedup_channels,
+        'totalRaw': len(channels),
+        'totalDedup': len(dedup_channels),
+        'groups': list(groups.values())
+    }
+
+    logger.info(f"URL预览完成: {url} -> 原始{len(channels)}个，去重后{len(dedup_channels)}个")
+    return success_response(data=result, msg=f"成功解析 {len(dedup_channels)} 个频道")
+
+
+class BatchDeleteChannels(BaseModel):
+    channel_ids: list[int]
+
+
+@app.post("/channels/batch-delete")
+async def batch_delete_channels(body: BatchDeleteChannels, db: Session = Depends(get_db)):
+    """批量删除频道"""
+    if not body.channel_ids:
+        raise BusinessException("请选择要删除的频道", ErrorCode.PARAM_ERROR)
+
+    count = db.query(Channel).filter(Channel.id.in_(body.channel_ids)).delete()
+    db.commit()
+    logger.info(f"批量删除频道完成: 删除{count}个")
+    return success_response(data={"deleted": count}, msg=f"已删除 {count} 个频道")
 
 
 class BatchGroupUpdate(BaseModel):

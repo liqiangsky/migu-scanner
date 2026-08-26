@@ -12,7 +12,7 @@ router = APIRouter()
 
 @router.get("/events")
 async def sse_events():
-    """SSE 实时事件推送。前端用 EventSource('/api/events') 连接"""
+    """SSE 实时事件推送。前端用 EventSource('/events') 连接"""
     return StreamingResponse(
         event_bus.event_generator(),
         media_type="text/event-stream",

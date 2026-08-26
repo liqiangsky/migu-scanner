@@ -16,6 +16,9 @@
         <button class="action-btn primary-btn" @click="openBatchGroupModal" title="批量分组">
           <span class="material-symbols-outlined icon-g-btn">batch_prediction</span>
         </button>
+        <button class="action-btn primary-btn" @click="openBatchDeleteModal" title="批量删除" style="background: var(--color-red);">
+          <span class="material-symbols-outlined icon-g-btn">delete</span>
+        </button>
         <button class="action-btn primary-btn" @click="openUrlModal" title="订阅地址">
           <span class="material-symbols-outlined icon-g-btn">link</span>
         </button>
@@ -116,39 +119,76 @@
             </div>
           </div>
 
-          <!-- 步骤1：上传文件 -->
+          <!-- 步骤1：上传文件或输入URL -->
           <div v-if="importStep === 1" class="step-content">
-            <div
-              class="upload-area"
-              :class="{ 'is-dragging': isDragging }"
-              @dragover.prevent="isDragging = true"
-              @dragleave="isDragging = false"
-              @drop.prevent="handleDrop"
-              @click="triggerFileInput"
-            >
-              <input
-                ref="fileInputRef"
-                type="file"
-                accept=".txt,.m3u,.m3u8"
-                class="file-input-hidden"
-                @change="handleFileSelect"
-              />
-              <span class="material-symbols-outlined upload-icon">cloud_upload</span>
-              <p class="upload-title">点击或拖拽上传文件</p>
-              <p class="upload-hint">支持 .txt 和 .m3u/.m3u8 格式</p>
-            </div>
-
-            <!-- 已选文件信息 -->
-            <div v-if="selectedFile" class="selected-file">
-              <span class="material-symbols-outlined file-icon">insert_drive_file</span>
-              <div class="file-info">
-                <span class="file-name">{{ selectedFile.name }}</span>
-                <span class="file-size">{{ formatFileSize(selectedFile.size) }}</span>
-              </div>
-              <button class="remove-file-btn" @click="removeFile">
-                <span class="material-symbols-outlined">close</span>
+            <!-- 模式切换 -->
+            <div class="import-mode-tabs">
+              <button
+                class="mode-tab"
+                :class="{ active: importMode === 'file' }"
+                @click="importMode = 'file'"
+              >
+                <span class="material-symbols-outlined icon-sm">cloud_upload</span>
+                上传文件
+              </button>
+              <button
+                class="mode-tab"
+                :class="{ active: importMode === 'url' }"
+                @click="importMode = 'url'"
+              >
+                <span class="material-symbols-outlined icon-sm">link</span>
+                远程URL
               </button>
             </div>
+
+            <!-- 文件上传区域 -->
+            <template v-if="importMode === 'file'">
+              <div
+                class="upload-area"
+                :class="{ 'is-dragging': isDragging }"
+                @dragover.prevent="isDragging = true"
+                @dragleave="isDragging = false"
+                @drop.prevent="handleDrop"
+                @click="triggerFileInput"
+              >
+                <input
+                  ref="fileInputRef"
+                  type="file"
+                  accept=".txt,.m3u,.m3u8"
+                  class="file-input-hidden"
+                  @change="handleFileSelect"
+                />
+                <span class="material-symbols-outlined upload-icon">cloud_upload</span>
+                <p class="upload-title">点击或拖拽上传文件</p>
+                <p class="upload-hint">支持 .txt 和 .m3u/.m3u8 格式</p>
+              </div>
+
+              <!-- 已选文件信息 -->
+              <div v-if="selectedFile" class="selected-file">
+                <span class="material-symbols-outlined file-icon">insert_drive_file</span>
+                <div class="file-info">
+                  <span class="file-name">{{ selectedFile.name }}</span>
+                  <span class="file-size">{{ formatFileSize(selectedFile.size) }}</span>
+                </div>
+                <button class="remove-file-btn" @click="removeFile">
+                  <span class="material-symbols-outlined">close</span>
+                </button>
+              </div>
+            </template>
+
+            <!-- URL输入区域 -->
+            <template v-else>
+              <div class="url-input-area">
+                <span class="material-symbols-outlined url-icon">public</span>
+                <input
+                  v-model="urlInput"
+                  type="url"
+                  class="url-input"
+                  placeholder="请输入频道列表的远程URL地址…"
+                />
+              </div>
+              <p class="url-hint">支持 .txt、.m3u、.m3u8 等格式的频道列表文件</p>
+            </template>
 
             <button
               class="next-step-btn"
@@ -328,6 +368,61 @@
       </div>
     </div>
 
+    <!-- 批量删除弹窗 -->
+    <div class="modal-overlay" v-if="showBatchDeleteModal" @click="closeBatchDeleteModal">
+      <div class="import-modal channel-modal" @click.stop>
+        <div class="modal-handle"></div>
+        <div class="modal-header">
+          <h2 class="modal-title">批量删除</h2>
+          <button class="modal-close-btn" @click="closeBatchDeleteModal">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <!-- 警告提示 -->
+          <div class="batch-delete-warning">
+            <span class="material-symbols-outlined warning-icon">warning</span>
+            <span>删除后不可恢复，请谨慎操作</span>
+          </div>
+          <!-- 频道列表 -->
+          <div class="batch-group-list">
+            <div v-if="allChannels.length === 0" class="empty-batch">暂无频道</div>
+            <div
+              v-for="ch in allChannels"
+              :key="ch.id"
+              class="batch-channel-item"
+              :class="{ selected: selectedChannelIds.includes(ch.id) }"
+              @click="toggleChannel(ch.id)"
+            >
+              <span class="batch-checkbox-custom" :class="{ checked: selectedChannelIds.includes(ch.id) }">
+                <span class="check-icon">✓</span>
+              </span>
+              <span class="batch-ch-name">{{ ch.name }}</span>
+              <span class="batch-ch-code mono">{{ ch.code }}</span>
+              <span class="batch-ch-group">{{ ch.groupName || '未分组' }}</span>
+            </div>
+          </div>
+          <!-- 全选/反选 -->
+          <div class="batch-select-actions">
+            <button class="select-all-btn" @click="selectAll">全选</button>
+            <button class="select-none-btn" @click="selectNone">全不选</button>
+            <button class="select-invert-btn" @click="invertSelection">反选</button>
+            <span class="selected-count">已选 {{ selectedChannelIds.length }} 个</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="back-btn" @click="closeBatchDeleteModal">取消</button>
+          <button
+            class="confirm-delete-btn"
+            :disabled="selectedChannelIds.length === 0 || batchDeleting"
+            @click="applyBatchDelete"
+          >
+            {{ batchDeleting ? '删除中...' : `删除 ${selectedChannelIds.length} 个频道` }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 添加/编辑 频道弹窗 -->
     <div class="modal-overlay" v-if="showChannelModal" @click="closeChannelModal">
       <div class="import-modal channel-modal" @click.stop>
@@ -457,7 +552,13 @@ const channelForm = ref({ name: '', code: '', logoName: '', groupId: 0 })
 const fileInputRef = ref(null)
 const selectedFile = ref(null)
 const isDragging = ref(false)
-const canParse = computed(() => selectedFile.value !== null)
+const importMode = ref('file') // 'file' or 'url'
+const urlInput = ref('')
+const fetchingUrl = ref(false)
+const canParse = computed(() => {
+  if (importMode.value === 'url') return urlInput.value.trim().length > 0
+  return selectedFile.value !== null
+})
 
 // 解析结果
 const parsedChannels = ref([])
@@ -614,34 +715,53 @@ const removeFile = () => {
 
 // 解析并预览
 const parseAndPreview = async () => {
-  if (!selectedFile.value) return
+  if (importMode.value === 'url') {
+    await fetchUrlPreview()
+  } else {
+    await parseFilePreview()
+  }
+}
 
+// 从文件预览
+const parseFilePreview = async () => {
+  if (!selectedFile.value) return
   try {
     const text = await selectedFile.value.text()
     const rawChannels = detectAndParse(text, selectedFile.value.name)
     const channels = filterMiguChannels(rawChannels)
-
-    if (channels.length === 0) {
-      toast.warning(rawChannels.length > 0 ? '未找到符合条件的 Migu 频道（需以 /9位数字 结尾）' : '未能解析到任何频道数据')
-      return
-    }
-
-    if (channels.length < rawChannels.length) {
-      console.warn(`过滤掉 ${rawChannels.length - channels.length} 个非 Migu 频道`)
-    }
-
-    parsedChannels.value = channels
-    parsedGroups.value = [...new Set(channels.map(ch => ch.group).filter(Boolean))]
-    parsedGroupedChannels.value = buildGroupedChannels(channels)
-
-    // 立即去重
-    calculateDuplicates()
-
-    importStep.value = 2
-    toast.success(`成功解析 ${channels.length} 个频道，去重后 ${dedupChannels.value.length} 个`)
+    processChannels(channels)
   } catch (e) {
     toast.error('文件读取失败')
   }
+}
+
+// 从URL预览
+const fetchUrlPreview = async () => {
+  if (!urlInput.value.trim()) return
+  fetchingUrl.value = true
+  try {
+    const result = await request.post('/channels/batch-import-preview', { url: urlInput.value.trim() })
+    if (result && result.channels && result.channels.length > 0) {
+      processChannels(result.channels)
+    }
+  } catch {
+  } finally {
+    fetchingUrl.value = false
+  }
+}
+
+// 处理频道数据（通用逻辑）
+const processChannels = (channels) => {
+  if (channels.length === 0) {
+    toast.warning('未找到符合条件的 Migu 频道（需以 /9位数字 结尾）')
+    return
+  }
+  parsedChannels.value = channels
+  parsedGroups.value = [...new Set(channels.map(ch => ch.group).filter(Boolean))]
+  parsedGroupedChannels.value = buildGroupedChannels(channels)
+  calculateDuplicates()
+  importStep.value = 2
+  toast.success(`成功解析 ${channels.length} 个频道`)
 }
 
 // 构建分组后的频道列表
@@ -672,7 +792,9 @@ const closeImportModal = () => {
 // 重置导入状态
 const resetImportState = () => {
   importStep.value = 1
+  importMode.value = 'file'
   selectedFile.value = null
+  urlInput.value = ''
   parsedChannels.value = []
   parsedGroups.value = []
   parsedGroupedChannels.value = []
@@ -999,6 +1121,38 @@ const applyBatchGroup = async () => {
     // 错误已由拦截器处理
   } finally {
     batchGrouping.value = false
+  }
+}
+
+// ===== 批量删除 =====
+const showBatchDeleteModal = ref(false)
+const batchDeleting = ref(false)
+
+const openBatchDeleteModal = () => {
+  selectedChannelIds.value = []
+  showBatchDeleteModal.value = true
+}
+
+const closeBatchDeleteModal = () => {
+  showBatchDeleteModal.value = false
+  selectedChannelIds.value = []
+}
+
+const applyBatchDelete = async () => {
+  if (selectedChannelIds.value.length === 0) return
+  if (!confirm(`确定删除选中的 ${selectedChannelIds.value.length} 个频道？此操作不可恢复。`)) return
+  batchDeleting.value = true
+  try {
+    await request.post('/channels/batch-delete', {
+      channel_ids: selectedChannelIds.value
+    })
+    toast.success(`已删除 ${selectedChannelIds.value.length} 个频道`)
+    closeBatchDeleteModal()
+    await loadChannels()
+  } catch (e) {
+    // 错误已由拦截器处理
+  } finally {
+    batchDeleting.value = false
   }
 }
 
@@ -1572,6 +1726,77 @@ onUnmounted(() => {
 }
 .file-input-hidden {
   display: none;
+}
+
+/* ===== 导入模式切换 ===== */
+.import-mode-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.mode-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: 2px solid var(--bg-neutral);
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.mode-tab:hover {
+  border-color: var(--color-blue);
+  color: var(--text-primary);
+}
+.mode-tab.active {
+  border-color: var(--color-blue);
+  background: rgba(0, 122, 255, 0.08);
+  color: var(--color-blue);
+}
+.mode-tab .icon-sm {
+  font-size: 18px !important;
+}
+
+/* ===== URL 输入区域 ===== */
+.url-input-area {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.url-icon {
+  font-size: 22px !important;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.url-input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 2px solid var(--bg-neutral);
+  border-radius: var(--radius-input);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: monospace;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.url-input:focus {
+  border-color: var(--color-blue);
+}
+.url-input::placeholder {
+  color: var(--text-muted);
+  font-family: inherit;
+}
+.url-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: -4px;
 }
 
 /* 已选文件 */
@@ -2348,6 +2573,7 @@ onUnmounted(() => {
   border: 1px solid var(--bg-neutral);
   border-radius: var(--radius-input);
   padding: 4px 8px 8px 0;
+  margin-top: 8px;
 }
 .batch-channel-item {
   padding: 8px 10px;
@@ -2466,5 +2692,47 @@ onUnmounted(() => {
   padding: 24px;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+/* ===== 批量删除弹窗样式 ===== */
+.confirm-delete-btn {
+  flex: 1;
+  padding: 12px 16px;
+  border: none;
+  border-radius: var(--radius-input);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--color-red);
+  color: #fff;
+  justify-content: center;
+}
+.confirm-delete-btn:hover:not(:disabled) {
+  background: #e03e3e;
+}
+.confirm-delete-btn:disabled {
+  background: var(--bg-neutral);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+.modal-footer .confirm-delete-btn {
+  flex: 1;
+  justify-content: center;
+}
+.batch-delete-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(255, 59, 48, 0.08);
+  border-radius: var(--radius-input);
+  font-size: 13px;
+  color: var(--color-red);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.warning-icon {
+  font-size: 20px !important;
 }
 </style>

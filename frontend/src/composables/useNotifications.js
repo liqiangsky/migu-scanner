@@ -3,6 +3,7 @@
  * 在 App.vue 中调用 connect() 即可全局订阅通知
  */
 import { toast } from '@/components/Toast'
+import { baseURL } from '@/constant'
 
 let eventSource = null
 
@@ -14,7 +15,7 @@ export function connect() {
     eventSource.close()
   }
 
-  eventSource = new EventSource('/api/events')
+  eventSource = new EventSource(baseURL + '/events')
 
   eventSource.addEventListener('message', (event) => {
     try {
