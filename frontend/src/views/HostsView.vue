@@ -11,6 +11,9 @@
           <RegionFilter v-model="selectedProvince" @change="handleFilterChange" />
           <OperatorFilter v-model="selectedIsp" @change="handleFilterChange" />
         </div>
+        <button class="action-btn primary-btn" :class="{ loading: retestingAll }" @click="handleRetestAll" title="复测所有主机">
+          <span class="material-symbols-outlined icon-g-btn">{{ retestingAll ? 'sync' : 'refresh' }}</span>
+        </button>
       </div>
     </div>
 
@@ -110,6 +113,7 @@ import { toast } from '@/components/Toast'
 import RegionFilter from '@/components/RegionFilter.vue'
 import OperatorFilter from '@/components/OperatorFilter.vue'
 import { copyText } from '@/utils/copy'
+import { useNotificationListener } from '@/composables/useNotifications'
 
 const hosts = ref([])
 const selectedProvince = ref('')
@@ -120,6 +124,7 @@ const pageSize = 20
 const totalPages = ref(1)
 const loading = ref(false)
 const loadingMore = ref(false)
+const retestingAll = ref(false)
 
 const formatTime = (timestamp) => {
   if (!timestamp) return '-'
@@ -199,9 +204,29 @@ const handleTestDelay = async (host) => {
   }
 }
 
+const handleRetestAll = async () => {
+  if (retestingAll.value) return
+  retestingAll.value = true
+  try {
+    await request.post('/hosts/retest-all')
+    toast.success('复测任务已启动')
+  } catch {
+    toast.error('复测启动失败')
+    retestingAll.value = false
+  }
+}
+
+// 监听复测完成通知，自动刷新列表
+const handleNotification = () => {
+  loadHosts(true)
+  retestingAll.value = false
+}
+
 onMounted(() => {
   loadHosts(true)
 })
+
+useNotificationListener('HOST_RETEST', handleNotification)
 </script>
 
 <style scoped>
@@ -377,6 +402,26 @@ onMounted(() => {
   cursor: pointer;
 }
 
+/* 页头主要按钮 */
+.primary-btn {
+  background: var(--color-blue);
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  border: none;
+}
+.primary-btn:active {
+  transform: scale(0.9);
+  background: #0066d6;
+}
+
 .delete-btn {
   background: #fdecea;
   color: #e5484d;
@@ -464,6 +509,10 @@ onMounted(() => {
     'opsz' 24;
   display: inline-block;
   vertical-align: middle;
+}
+
+.icon-g-btn {
+  font-size: 18px !important;
 }
 
 .copy-btn .icon-g {

@@ -43,7 +43,7 @@ class Channel(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, default="")
     code = Column(String, unique=True, nullable=False, index=True)  # 9位数字CODE
-    logo_name = Column(String, default="")  # 台标文件名（不含扩展名）
+    logo = Column(String, default="")  # 台标（URL 或名称）
     group_id = Column(Integer, nullable=False, default=0)
     created_at = Column(Integer, default=0)
 

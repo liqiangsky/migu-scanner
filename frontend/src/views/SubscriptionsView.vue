@@ -119,6 +119,7 @@
 import { ref, onMounted } from 'vue'
 import request from '@/api'
 import { toast } from '@/components/Toast'
+import { useNotificationListener } from '@/composables/useNotifications'
 
 const subscriptions = ref([])
 const loaded = ref(false)
@@ -150,6 +151,12 @@ const loadSubscriptions = async () => {
 onMounted(() => {
   loadSubscriptions()
 })
+
+const handleNotification = () => {
+  loadSubscriptions()
+}
+
+useNotificationListener('SUBSCRIPTION', handleNotification)
 
 const startAddSub = () => {
   editingId.value = null

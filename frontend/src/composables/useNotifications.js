@@ -2,10 +2,12 @@
  * 全局通知 composable - SSE 连接
  * 在 App.vue 中调用 connect() 即可全局订阅通知
  */
+import { onMounted, onUnmounted } from 'vue'
 import { toast } from '@/components/Toast'
-import { baseURL } from '@/constant'
+import { baseURL, NOTIFICATION_SOURCE } from '@/constant'
 
 let eventSource = null
+export const notificationEvent = new EventTarget()
 
 /**
  * 连接到 SSE 事件流（全局只连接一次）
@@ -31,6 +33,12 @@ export function connect() {
       } else {
         toast.notify(data.title || '通知', type)
       }
+      // 派发自定义事件，供组件监听
+      // 如果 triggerEvent 为 true 且 source 有值，派发 source 命名的自定义事件
+      // 事件名为英文标识，如 HOST_RETEST、SUBSCRIPTION_FETCH 等
+      if (data?.triggerEvent && data?.source) {
+        notificationEvent.dispatchEvent(new CustomEvent(data.source, { detail: { type, data } }))
+      }
     } catch {
       // 忽略解析失败
     }
@@ -53,4 +61,27 @@ export function disconnect() {
     eventSource.close()
     eventSource = null
   }
+}
+
+/**
+ * 通知监听 composable
+ * 用于组件监听特定来源的 SSE 通知事件
+ *
+ * @param {string} source - 通知来源标识，如 'HOST_RETEST'、'SUBSCRIPTION'
+ * @param {Function} onNotify - 收到通知时的回调函数
+ */
+export function useNotificationListener(source, onNotify) {
+  const eventKey = NOTIFICATION_SOURCE[source]
+
+  onMounted(() => {
+    if (eventKey) {
+      notificationEvent.addEventListener(eventKey, onNotify)
+    }
+  })
+
+  onUnmounted(() => {
+    if (eventKey) {
+      notificationEvent.removeEventListener(eventKey, onNotify)
+    }
+  })
 }

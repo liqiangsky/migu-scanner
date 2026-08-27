@@ -11,7 +11,7 @@ from sqlalchemy import func, exc
 
 from database import get_db, init_db, SessionLocal, check_integrity, db_write_lock
 from models import Subscription, Host, ChannelGroup, Channel, ChannelPlayUrl
-from services.notification_service import create_notification, MSG_TYPE_SUCCESS, MSG_TYPE_ERROR
+from services.notification_service import create_notification, MSG_TYPE_SUCCESS, MSG_TYPE_ERROR, MSG_TYPE_WARNING, NOTIFICATION_SOURCE_HOST_RETEST, NOTIFICATION_SOURCE_SUBSCRIPTION
 from services.url_parser import parse_all_sources
 from services.channel_parser import detect_and_parse, filter_migu_channels, extract_code
 from services.host_resolver import get_resolver, TEST_CHANNEL_CODE
@@ -43,6 +43,9 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    import asyncio
+    from services.notification_service import set_main_loop
+    set_main_loop(asyncio.get_running_loop())
     logger.info("=== 服务器启动 ===")
 
 
@@ -294,6 +297,67 @@ async def test_host_delay(host_id: int, db: Session = Depends(get_db)):
     }, msg="success")
 
 
+@app.post("/hosts/retest-all")
+async def retest_all_hosts(db: Session = Depends(get_db)):
+    """复测所有主机，失败的直接删除。后台异步执行。"""
+    import threading
+
+    def _retest_all():
+        # 使用独立 session，不依赖请求级 session
+        session_db = SessionLocal()
+        try:
+            resolver = get_resolver()
+            hosts = session_db.query(Host).all()
+            total = len(hosts)
+            survived = 0
+            eliminated = []
+            for host in hosts:
+                test_url = f"{host.full_path.rstrip('/')}/{TEST_CHANNEL_CODE}"
+                try:
+                    result = asyncio.run(resolver.test_host(test_url))
+                    latency = result.get("latency", -1)
+                    if latency >= 0:
+                        host.latency = latency
+                        host.updated_at = timestamp_shanghai()
+                        survived += 1
+                        logger.info(f"复测通过 {host.host}: latency={latency}ms")
+                    else:
+                        eliminated.append(host.host)
+                        logger.warning(f"复测失败 {host.host}: 返回无效")
+                except Exception as e:
+                    eliminated.append(host.host)
+                    logger.warning(f"复测失败 {host.host}: {e}")
+
+            with db_write_lock:
+                # 删除复测失败的主机
+                for host_str in eliminated:
+                    session_db.query(Host).filter(Host.host == host_str).delete()
+                session_db.commit()
+
+            logger.info(f"复测完成: 总数{total}，存活{survived}，淘汰{len(eliminated)}")
+
+            # 推送通知
+            if eliminated:
+                create_notification(session_db, MSG_TYPE_WARNING,
+                    "主机复测完成",
+                    f"共复测 {total} 台主机，存活 {survived} 台，淘汰 {len(eliminated)} 台",
+                    source=NOTIFICATION_SOURCE_HOST_RETEST,
+                    trigger_event=True
+                )
+            else:
+                create_notification(session_db, MSG_TYPE_SUCCESS,
+                    "主机复测完成",
+                    f"共复测 {total} 台主机，全部存活可用",
+                    source=NOTIFICATION_SOURCE_HOST_RETEST,
+                    trigger_event=True
+                )
+        finally:
+            session_db.close()
+
+    threading.Thread(target=_retest_all, daemon=True).start()
+    return success_response(msg="复测任务已启动")
+
+
 # ============ 拉取 API ============
 
 async def _pull_subscription(subscription_id: int):
@@ -379,7 +443,8 @@ async def _pull_subscription(subscription_id: int):
                 create_notification(db, MSG_TYPE_SUCCESS,
                     f"订阅拉取完成: {subscription.name or subscription.url}",
                     f"新增 {added} 个主机，跳过 {skipped} 个",
-                    "订阅管理"
+                    source=NOTIFICATION_SOURCE_SUBSCRIPTION,
+                    trigger_event=True
                 )
     except Exception as e:
         logger.error(f"拉取过程发生严重错误: {e}", exc_info=True)
@@ -388,7 +453,8 @@ async def _pull_subscription(subscription_id: int):
                 create_notification(db, MSG_TYPE_ERROR,
                     f"订阅拉取失败: {subscription.name or subscription.url}",
                     str(e),
-                    "订阅管理"
+                    source=NOTIFICATION_SOURCE_SUBSCRIPTION,
+                    trigger_event=True
                 )
         except Exception as notif_e:
             logger.error(f"发送通知失败: {notif_e}")
@@ -439,7 +505,7 @@ async def get_channels(db: Session = Depends(get_db)):
                 "id": ch.id,
                 "name": ch.name,
                 "code": ch.code,
-                "logoName": ch.logo_name or "",
+                "logo": ch.logo or "",
                 "groupId": ch.group_id,
                 "groupName": groups_dict[ch.group_id]["name"],
                 "createdAt": ch.created_at,
@@ -467,7 +533,7 @@ async def get_channels(db: Session = Depends(get_db)):
                 "id": ch.id,
                 "name": ch.name,
                 "code": ch.code,
-                "logoName": ch.logo_name or "",
+                "logo": ch.logo or "",
                 "groupId": ch.group_id,
                 "groupName": "未分组",
                 "createdAt": ch.created_at,
@@ -603,7 +669,7 @@ class ChannelImportItem(BaseModel):
     name: str
     code: str  # 9位数字CODE
     group: str  # 分组名称
-    logo_name: str = ""  # 台标文件名
+    logo: str = ""  # 台标（URL 或名称）
 
 
 class ChannelBatchImport(BaseModel):
@@ -652,7 +718,7 @@ async def batch_import_channels(body: ChannelBatchImport, db: Session = Depends(
         new_channel = Channel(
             name=item.name.strip(),
             code=code,
-            logo_name=item.name.strip(),  # 默认使用名称作为台标名
+            logo=item.logo.strip() if item.logo else item.name.strip(),
             group_id=group_id,
             created_at=now,
         )
@@ -743,11 +809,14 @@ async def batch_delete_channels(body: BatchDeleteChannels, db: Session = Depends
     if not body.channel_ids:
         raise BusinessException("请选择要删除的频道", ErrorCode.PARAM_ERROR)
 
-    count = db.query(Channel).filter(Channel.id.in_(body.channel_ids)).delete()
+    channels = db.query(Channel).filter(Channel.id.in_(body.channel_ids)).all()
+    channel_codes = [c.code for c in channels]
     with db_write_lock:
+        db.query(ChannelPlayUrl).filter(ChannelPlayUrl.channel_code.in_(channel_codes)).delete()
+        db.query(Channel).filter(Channel.id.in_(body.channel_ids)).delete()
         db.commit()
-    logger.info(f"批量删除频道完成: 删除{count}个")
-    return success_response(data={"deleted": count}, msg=f"已删除 {count} 个频道")
+    logger.info(f"批量删除频道完成: 删除{len(channels)}个")
+    return success_response(data={"deleted": len(channels)}, msg=f"已删除 {len(channels)} 个频道")
 
 
 class BatchGroupUpdate(BaseModel):
@@ -781,6 +850,7 @@ async def delete_channel(channel_id: int, db: Session = Depends(get_db)):
     if not channel:
         raise BusinessException("频道不存在", ErrorCode.NOT_FOUND)
     with db_write_lock:
+        db.query(ChannelPlayUrl).filter(ChannelPlayUrl.channel_code == channel.code).delete()
         db.delete(channel)
         db.commit()
     return success_response(msg="删除成功")
@@ -789,14 +859,14 @@ async def delete_channel(channel_id: int, db: Session = Depends(get_db)):
 class ChannelCreate(BaseModel):
     name: str
     code: str
-    logo_name: str = ""
+    logo: str = ""
     group_id: Optional[int] = None
 
 
 class ChannelUpdate(BaseModel):
     name: Optional[str] = None
     code: Optional[str] = None
-    logo_name: Optional[str] = None
+    logo: Optional[str] = None
     group_id: Optional[int] = None
 
 
@@ -816,7 +886,7 @@ async def create_channel(body: ChannelCreate, db: Session = Depends(get_db)):
     new_channel = Channel(
         name=body.name.strip(),
         code=code,
-        logo_name=body.logo_name.strip() if body.logo_name else body.name.strip(),
+        logo=body.logo.strip() if body.logo else body.name.strip(),
         group_id=body.group_id if body.group_id is not None else 0,
         created_at=now,
     )
@@ -828,7 +898,7 @@ async def create_channel(body: ChannelCreate, db: Session = Depends(get_db)):
         "id": new_channel.id,
         "name": new_channel.name,
         "code": new_channel.code,
-        "logoName": new_channel.logo_name or "",
+        "logo": new_channel.logo or "",
         "groupId": new_channel.group_id,
         "createdAt": new_channel.created_at,
     }, msg="创建成功")
@@ -854,8 +924,8 @@ async def update_channel(channel_id: int, body: ChannelUpdate, db: Session = Dep
     if body.name is not None:
         channel.name = body.name.strip()
 
-    if body.logo_name is not None:
-        channel.logo_name = body.logo_name.strip()
+    if body.logo is not None:
+        channel.logo = body.logo.strip()
 
     if body.group_id is not None:
         channel.group_id = body.group_id
@@ -867,7 +937,7 @@ async def update_channel(channel_id: int, body: ChannelUpdate, db: Session = Dep
         "id": channel.id,
         "name": channel.name,
         "code": channel.code,
-        "logoName": channel.logo_name or "",
+        "logo": channel.logo or "",
         "groupId": channel.group_id,
         "createdAt": channel.created_at,
     }, msg="更新成功")
@@ -954,6 +1024,16 @@ async def sub_txt(request: Request, db: Session = Depends(get_db)):
     return Response(content="\n".join(lines) + "\n", media_type="text/plain")
 
 
+def _resolve_logo_url(logo: str) -> str:
+    """解析台标URL：如果是HTTP地址直接返回，否则拼接fanmingming live"""
+    if not logo:
+        return ""
+    logo = logo.strip()
+    if logo.startswith("http://") or logo.startswith("https://"):
+        return logo
+    return f"https://v4.gh-proxy.org/https://raw.githubusercontent.com/fanmingming/live/refs/heads/main/tv/{logo}.png"
+
+
 @app.get("/sub/m3u")
 async def sub_m3u(request: Request, db: Session = Depends(get_db)):
     """返回 M3U 格式的订阅列表"""
@@ -978,13 +1058,13 @@ async def sub_m3u(request: Request, db: Session = Depends(get_db)):
     lines = ["#EXTM3U"]
     for g in groups:
         for ch in groups_dict[g.id]["channels"]:
-            logo = f"https://v4.gh-proxy.org/https://raw.githubusercontent.com/fanmingming/live/refs/heads/main/tv/{ch.logo_name}.png" if ch.logo_name else ""
+            logo = _resolve_logo_url(ch.logo)
             lines.append(f'#EXTINF:-1 group-title="{g.name}" tvg-name="{ch.name}" tvg-logo="{logo}",{ch.name}')
             lines.append(f"{base}/{ch.code}")
 
     if ungrouped:
         for ch in ungrouped:
-            logo = f"https://v4.gh-proxy.org/https://raw.githubusercontent.com/fanmingming/live/refs/heads/main/tv/{ch.logo_name}.png" if ch.logo_name else ""
+            logo = _resolve_logo_url(ch.logo)
             lines.append(f'#EXTINF:-1 group-title="未分组" tvg-name="{ch.name}" tvg-logo="{logo}",{ch.name}')
             lines.append(f"{base}/{ch.code}")
 

@@ -444,8 +444,8 @@
             <input v-model="channelForm.code" type="text" placeholder="例如：608807420" maxlength="9" />
           </div>
           <div class="form-item">
-            <label>台标名称</label>
-            <input v-model="channelForm.logoName" type="text" placeholder="留空则使用频道名称" />
+            <label>台标</label>
+            <input v-model="channelForm.logo" type="text" placeholder="粘贴图片地址 或 输入名称自动匹配" />
           </div>
           <div class="form-item">
             <label>分组</label>
@@ -546,7 +546,7 @@ const editGroupName = ref('')
 const showChannelModal = ref(false)
 const editingChannelId = ref(null)
 const savingChannel = ref(false)
-const channelForm = ref({ name: '', code: '', logoName: '', groupId: 0 })
+const channelForm = ref({ name: '', code: '', logo: '', groupId: 0 })
 
 // 文件上传
 const fileInputRef = ref(null)
@@ -926,7 +926,7 @@ const loadChannels = async () => {
         ...group,
         channels: (group.channels || []).map(ch => ({
           ...ch,
-          logoUrl: ch.logoName ? `https://v4.gh-proxy.org/https://raw.githubusercontent.com/fanmingming/live/refs/heads/main/tv/${encodeURIComponent(ch.logoName)}.png` : null,
+          logoUrl: ch.logo && (ch.logo.startsWith('http://') || ch.logo.startsWith('https://')) ? ch.logo : `https://v4.gh-proxy.org/https://raw.githubusercontent.com/fanmingming/live/refs/heads/main/tv/${encodeURIComponent(ch.logo)}.png`,
           logoLoaded: true
         }))
       }))
@@ -1159,7 +1159,7 @@ const applyBatchDelete = async () => {
 // 打开添加频道弹窗
 const openAddModal = () => {
   editingChannelId.value = null
-  channelForm.value = { name: '', code: '', logoName: '', groupId: 0 }
+  channelForm.value = { name: '', code: '', logo: '', groupId: 0 }
   showChannelModal.value = true
 }
 
@@ -1184,7 +1184,7 @@ const openEditModal = (group, ch) => {
   channelForm.value = {
     name: ch.name,
     code: ch.code,
-    logoName: ch.logoName || ch.name,
+    logo: ch.logo || ch.name,
     groupId: ch.groupId
   }
   showChannelModal.value = true
@@ -1198,7 +1198,7 @@ const closeChannelModal = () => {
 
 // 保存频道（新增或更新）
 const saveChannel = async () => {
-  const { name, code, logoName, groupId } = channelForm.value
+  const { name, code, logo, groupId } = channelForm.value
   if (!name.trim() || !code.trim()) {
     toast.warning('名称和 CODE 不能为空')
     return
@@ -1212,7 +1212,7 @@ const saveChannel = async () => {
     const payload = {
       name: name.trim(),
       code: code.trim(),
-      logo_name: logoName.trim() || name.trim(),
+      logo: logo.trim() || name.trim(),
       group_id: groupId != null ? Number(groupId) : 0
     }
     let result
