@@ -100,25 +100,6 @@
         </div>
 
         <div class="modal-body">
-          <!-- 步骤指示器 -->
-          <div class="steps-indicator">
-            <div
-              class="step-item"
-              :class="{ active: importStep >= 1, completed: importStep > 1 }"
-            >
-              <span class="step-num">1</span>
-              <span class="step-label">上传文件</span>
-            </div>
-            <div class="step-line" :class="{ active: importStep > 1 }"></div>
-            <div
-              class="step-item"
-              :class="{ active: importStep >= 2 }"
-            >
-              <span class="step-num">2</span>
-              <span class="step-label">预览导入</span>
-            </div>
-          </div>
-
           <!-- 步骤1：上传文件或输入URL -->
           <div v-if="importStep === 1" class="step-content">
             <!-- 模式切换 -->
@@ -186,6 +167,15 @@
                   class="url-input"
                   placeholder="请输入频道列表的远程URL地址…"
                 />
+                <button
+                  class="fetch-url-btn"
+                  :disabled="!urlInput.trim() || fetchingUrl"
+                  @click="handleFetchUrl"
+                >
+                  <span v-if="fetchingUrl" class="material-symbols-outlined icon-sm">progress_activity</span>
+                  <span v-else class="material-symbols-outlined icon-sm">cloud_download</span>
+                  {{ fetchingUrl ? '获取中…' : '获取' }}
+                </button>
               </div>
               <p class="url-hint">支持 .txt、.m3u、.m3u8 等格式的频道列表文件</p>
             </template>
@@ -216,11 +206,12 @@
                 :key="gIdx"
                 class="preview-group"
               >
-                <div class="preview-group-header">
+                <div class="preview-group-header" @click="togglePreviewGroup(group.name)">
                   <span class="preview-group-name">{{ group.name || '未分组' }}</span>
                   <span class="preview-group-count">{{ group.channels.length }} 个</span>
+                  <span class="material-symbols-outlined preview-group-expand-icon">{{ previewExpandedGroups.has(group.name) ? 'expand_less' : 'expand_more' }}</span>
                 </div>
-                <div class="preview-channels">
+                <div v-show="previewExpandedGroups.has(group.name)" class="preview-channels">
                   <div
                     v-for="(ch, cIdx) in group.channels"
                     :key="cIdx"
@@ -594,8 +585,9 @@ const isDragging = ref(false)
 const importMode = ref('file') // 'file' or 'url'
 const urlInput = ref('')
 const fetchingUrl = ref(false)
+const urlFetched = ref(false)
 const canParse = computed(() => {
-  if (importMode.value === 'url') return urlInput.value.trim().length > 0
+  if (importMode.value === 'url') return urlFetched.value
   return selectedFile.value !== null
 })
 
@@ -607,6 +599,18 @@ const parsedGroupedChannels = ref([])
 // 去重结果
 const dedupChannels = ref([])
 const duplicateGroups = ref([])
+
+// 预览分组展开状态
+const previewExpandedGroups = ref(new Set())
+const togglePreviewGroup = (groupName) => {
+  const set = previewExpandedGroups.value
+  if (set.has(groupName)) {
+    set.delete(groupName)
+  } else {
+    set.add(groupName)
+  }
+  previewExpandedGroups.value = new Set(set)
+}
 
 // 格式化文件大小
 const formatFileSize = (bytes) => {
@@ -755,7 +759,13 @@ const removeFile = () => {
 // 解析并预览
 const parseAndPreview = async () => {
   if (importMode.value === 'url') {
-    await fetchUrlPreview()
+    // 如果还没获取过数据，先获取
+    if (!urlFetched.value) {
+      await fetchUrlPreview()
+      if (!urlFetched.value) return // 获取失败，不跳转
+    }
+    // 跳转到预览步骤
+    importStep.value = 2
   } else {
     await parseFilePreview()
   }
@@ -774,19 +784,40 @@ const parseFilePreview = async () => {
   }
 }
 
-// 从URL预览
+// 从URL预览（仅获取数据，不跳转步骤）
 const fetchUrlPreview = async () => {
   if (!urlInput.value.trim()) return
   fetchingUrl.value = true
   try {
     const result = await request.post('/channels/batch-import-preview', { url: urlInput.value.trim() })
     if (result && result.channels && result.channels.length > 0) {
-      processChannels(result.channels)
+      parsedChannels.value = result.channels
+      parsedGroups.value = [...new Set(result.channels.map(ch => ch.group).filter(Boolean))]
+      parsedGroupedChannels.value = buildGroupedChannels(result.channels)
+      calculateDuplicates()
+      urlFetched.value = true
+      // 默认展开所有分组
+      previewExpandedGroups.value = new Set(parsedGroupedChannels.value.map(g => g.name))
+      toast.success(`成功获取 ${result.channels.length} 个频道`)
     }
   } catch {
+    urlFetched.value = false
   } finally {
     fetchingUrl.value = false
   }
+}
+
+// 点击获取按钮
+const handleFetchUrl = async () => {
+  if (!urlInput.value.trim() || fetchingUrl.value) return
+  // 验证URL格式
+  const url = urlInput.value.trim()
+  if (!/^https?:\/\/.+/.test(url)) {
+    toast.warning('请输入合法的URL地址（以 http:// 或 https:// 开头）')
+    return
+  }
+  urlFetched.value = false
+  await fetchUrlPreview()
 }
 
 // 处理频道数据（通用逻辑）
@@ -834,9 +865,11 @@ const resetImportState = () => {
   importMode.value = 'file'
   selectedFile.value = null
   urlInput.value = ''
+  urlFetched.value = false
   parsedChannels.value = []
   parsedGroups.value = []
   parsedGroupedChannels.value = []
+  previewExpandedGroups.value = new Set()
   if (fileInputRef.value) {
     fileInputRef.value.value = ''
   }
@@ -1798,60 +1831,6 @@ onUnmounted(() => {
   gap: 20px;
 }
 
-/* ===== 步骤指示器 ===== */
-.steps-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-.step-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-.step-num {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--bg-neutral);
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 700;
-  transition: all 0.3s;
-}
-.step-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-weight: 500;
-  transition: all 0.3s;
-}
-.step-item.active .step-num {
-  background: var(--color-blue);
-  color: #fff;
-}
-.step-item.active .step-label {
-  color: var(--color-blue);
-}
-.step-item.completed .step-num {
-  background: var(--color-green);
-  color: #fff;
-}
-.step-line {
-  flex: 1;
-  height: 2px;
-  background: var(--bg-neutral);
-  min-width: 20px;
-  transition: all 0.3s;
-}
-.step-line.active {
-  background: var(--color-green);
-}
-
 /* ===== 步骤内容 ===== */
 .step-content {
   display: flex;
@@ -1961,6 +1940,35 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--text-muted);
   margin-top: -4px;
+}
+
+/* 获取URL按钮 */
+.fetch-url-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: var(--radius-input);
+  background: var(--color-blue);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+.fetch-url-btn:hover:not(:disabled) {
+  background: #0066d6;
+}
+.fetch-url-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.fetch-url-btn:disabled {
+  background: var(--bg-neutral);
+  color: var(--text-muted);
+  cursor: not-allowed;
 }
 
 /* 已选文件 */
@@ -2087,26 +2095,36 @@ onUnmounted(() => {
   overflow-y: auto;
   border: 1px solid var(--bg-neutral);
   border-radius: var(--radius-input);
-  padding: 12px;
+  padding-right: 4px;
 }
 .preview-group {
-  margin-bottom: 16px;
+  margin-bottom: 4px;
 }
 .preview-group:last-child {
   margin-bottom: 0;
 }
 .preview-group-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 6px 8px;
-  background: var(--bg-neutral);
+  gap: 8px;
+  padding: 8px 10px;
   border-radius: 8px;
-  margin-bottom: 8px;
+  cursor: pointer;
+  margin-bottom: 4px;
+  transition: background 0.2s;
+  background: var(--bg-neutral);
   position: sticky;
-  top: -12px;
+  top: 0;
   z-index: 10;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.preview-group-header:hover {
+  background: #e8e8ed;
+}
+.preview-group-expand-icon {
+  font-size: 20px !important;
+  color: var(--text-muted);
+  transition: transform 0.2s;
 }
 .group-checkbox-label {
   display: flex;
@@ -2127,28 +2145,34 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 700;
   color: var(--text-primary);
+  flex: 1;
 }
 .preview-group-count {
   font-size: 11px;
   color: var(--text-muted);
+  background: var(--bg-neutral);
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 8px;
+  flex-shrink: 0;
 }
 .preview-channels {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 .preview-channel-item {
-  padding: 8px 12px;
-  background: var(--bg-page);
+  padding: 8px 10px;
   border-radius: 8px;
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   transition: background 0.2s;
+  margin-left: 12px;
 }
-.preview-channel-item.channel-selected {
-  background: rgba(0, 122, 255, 0.06);
+.preview-channel-item:hover {
+  background: var(--bg-neutral);
 }
 .channel-checkbox-label {
   display: flex;
@@ -2736,7 +2760,7 @@ onUnmounted(() => {
   overflow-y: auto;
   border: 1px solid var(--bg-neutral);
   border-radius: var(--radius-input);
-  padding: 4px 8px 8px 0;
+  padding-right: 4px;
   margin-top: 8px;
 }
 /* 分组头部 */
@@ -2784,7 +2808,7 @@ onUnmounted(() => {
   gap: 8px;
   cursor: pointer;
   margin-bottom: 4px;
-  margin-left: 24px;
+  margin-left: 12px;
 }
 .batch-channel-item:last-child {
   margin-bottom: 0;
