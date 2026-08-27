@@ -16,6 +16,7 @@ from services.url_parser import parse_all_sources
 from services.channel_parser import detect_and_parse, filter_migu_channels, extract_code
 from services.host_resolver import get_resolver, TEST_CHANNEL_CODE
 from services import playback_service
+from services.settings_service import get_all_settings, update_settings, SETTINGS_METADATA
 from config import settings, timestamp_shanghai
 
 import requests
@@ -28,6 +29,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("migu")
 
+# 全局订阅拉取并发限制：最多同时运行 N 个订阅拉取任务
+_subscription_semaphore = asyncio.Semaphore(settings.max_concurrent_subscriptions)
 
 
 app = FastAPI(title="Migu Subscriptions", version="1.0.0", docs_url=None, redoc_url=None)
@@ -130,6 +133,8 @@ async def get_subscriptions(db: Session = Depends(get_db)):
     return success_response(data=[{
         "id": s.id, "name": s.name or "", "url": s.url,
         "enabled": s.enabled, "fetchCron": s.fetch_cron or "",
+        "fetchStatus": s.fetch_status or "idle",
+        "lastFetchTime": s.last_fetch_time or 0,
         "createdAt": s.created_at, "updatedAt": s.updated_at,
     } for s in sources])
 
@@ -362,104 +367,137 @@ async def retest_all_hosts(db: Session = Depends(get_db)):
 
 async def _pull_subscription(subscription_id: int):
     """核心拉取逻辑，供单订阅和批量拉取复用。使用独立 DB session。"""
-    added = 0
-    skipped = 0
-    errors = []
-    # 后台任务使用独立 session，不依赖请求级 session
-    db = SessionLocal()
-    try:
-        subscription = db.query(Subscription).filter(Subscription.id == subscription_id).first()
-        if not subscription:
-            logger.error(f"拉取任务找不到订阅 ID={subscription_id}")
-            return
-        source_list = [{"url": subscription.url, "enabled": True, "name": subscription.name}]
-        logger.info(f"开始解析订阅源: {subscription.url}")
-
-        hosts = await parse_all_sources(source_list)
-        logger.info(f"解析完成，共发现 {len(hosts)} 个唯一 URL")
-
-        resolver = get_resolver()
-        hosts_to_add = []
-        for i, url in enumerate(hosts):
-            match = re.match(r"https?://(?P<HOST>[^/]+)(?P<PATH>/.*?)(?<!\d)(?P<CODE>\d{9})(?=[#$]|$)", url)
-            if not match:
-                logger.warning(f"无法解析 URL: {url}")
-                continue
-
-            host_full = match.group("HOST")
-            path = match.group("PATH")
-            code = match.group("CODE")
-            if ":" in host_full:
-                host, port_str = host_full.rsplit(":", 1)
-                port = int(port_str)
-            else:
-                host = host_full
-                port = 80
-
-            logger.debug(f"验证 HOST [{i+1}/{len(hosts)}]: {host}:{port} {path}{code}")
-
-            existing = db.query(Host).filter(Host.host == f"{host}:{port}").first()
-            if existing:
-                logger.debug(f"HOST 已存在，跳过: {host}:{port}")
-                skipped += 1
-                continue
-
-            try:
-                info = await resolver.resolve_host(host, port, path)
-                if not info.get("valid", False):
-                    logger.warning(f"HOST 验证失败，跳过: {host}:{port}, error={info.get('error', 'unknown')}")
-                    skipped += 1
-                    continue
-                now = timestamp_shanghai()
-                full_url = f"http://{host}:{port}{path}"
-                new_host = Host(
-                    host=info["host"], full_path=full_url, province=info["province"],
-                    isp=info["isp"], latency=info.get("latency"),
-                    created_at=now, updated_at=now
-                )
-                hosts_to_add.append(new_host)
-                added += 1
-                logger.info(f"验证通过: {host}:{port}, 省份={info['province']}, ISP={info['isp']}")
-            except Exception as e:
-                errors.append(f"{host}:{port}: {str(e)}")
-                logger.error(f"验证失败: {host}:{port} - {e}", exc_info=True)
-
-        subscription.updated_at = timestamp_shanghai()
-        # 批量写入，使用写锁保护整个事务
-        duplicate_count = 0
-        with db_write_lock:
-            for h in hosts_to_add:
-                db.add(h)
-            try:
-                db.commit()
-            except exc.IntegrityError:
-                db.rollback()
-                duplicate_count = len(hosts_to_add)
-                logger.warning(f"插入 host 时遇到重复数据，跳过 {duplicate_count} 条")
-        logger.info(f"拉取完成: 新增 {added} 个 HOST, 跳过 {skipped + duplicate_count} 个, 错误 {len(errors)} 个")
-
-        if added > 0 or skipped > 0:
-            with db_write_lock:
-                create_notification(db, MSG_TYPE_SUCCESS,
-                    f"订阅拉取完成: {subscription.name or subscription.url}",
-                    f"新增 {added} 个主机，跳过 {skipped} 个",
-                    source=NOTIFICATION_SOURCE_SUBSCRIPTION,
-                    trigger_event=True
-                )
-    except Exception as e:
-        logger.error(f"拉取过程发生严重错误: {e}", exc_info=True)
+    async with _subscription_semaphore:  # 全局并发限制
+        added = 0
+        skipped = 0
+        errors = []
+        # 后台任务使用独立 session，不依赖请求级 session
+        db = SessionLocal()
         try:
+            subscription = db.query(Subscription).filter(Subscription.id == subscription_id).first()
+            if not subscription:
+                logger.error(f"拉取任务找不到订阅 ID={subscription_id}")
+                return
+            # 设置拉取状态为 fetching
+            subscription.fetch_status = "fetching"
+            subscription.last_fetch_time = timestamp_shanghai()
             with db_write_lock:
-                create_notification(db, MSG_TYPE_ERROR,
-                    f"订阅拉取失败: {subscription.name or subscription.url}",
-                    str(e),
-                    source=NOTIFICATION_SOURCE_SUBSCRIPTION,
-                    trigger_event=True
-                )
-        except Exception as notif_e:
-            logger.error(f"发送通知失败: {notif_e}")
-    finally:
-        db.close()
+                db.commit()
+            source_list = [{"url": subscription.url, "enabled": True, "name": subscription.name}]
+            logger.info(f"开始解析订阅源: {subscription.url}")
+
+            hosts = await parse_all_sources(source_list)
+            logger.info(f"解析完成，共发现 {len(hosts)} 个唯一 URL")
+
+            resolver = get_resolver()
+            hosts_to_add = []
+            semaphore = asyncio.Semaphore(settings.max_concurrent_hosts_per_subscription)  # 每个订阅内最多并发验证 N 个 HOST
+            added_lock = asyncio.Lock()
+            skipped_lock = asyncio.Lock()
+            errors_lock = asyncio.Lock()
+
+            async def verify_one(url: str, index: int, total: int):
+                nonlocal added, skipped, errors
+                async with semaphore:
+                    match = re.match(r"https?://(?P<HOST>[^/]+)(?P<PATH>/.*?)(?<!\d)(?P<CODE>\d{9})(?=[#$]|$)", url)
+                    if not match:
+                        logger.warning(f"无法解析 URL: {url}")
+                        return
+
+                    host_full = match.group("HOST")
+                    path = match.group("PATH")
+                    code = match.group("CODE")
+                    if ":" in host_full:
+                        host, port_str = host_full.rsplit(":", 1)
+                        port = int(port_str)
+                    else:
+                        host = host_full
+                        port = 80
+
+                    logger.debug(f"验证 HOST [{index+1}/{total}]: {host}:{port} {path}{code}")
+
+                    existing = db.query(Host).filter(Host.host == f"{host}:{port}").first()
+                    if existing:
+                        logger.debug(f"HOST 已存在，跳过: {host}:{port}")
+                        async with skipped_lock:
+                            skipped += 1
+                        return
+
+                    try:
+                        info = await resolver.resolve_host(host, port, path)
+                        if not info.get("valid", False):
+                            logger.warning(f"HOST 验证失败，跳过: {host}:{port}, error={info.get('error', 'unknown')}")
+                            async with skipped_lock:
+                                skipped += 1
+                            return
+                        now = timestamp_shanghai()
+                        full_url = f"http://{host}:{port}{path}"
+                        new_host = Host(
+                            host=info["host"], full_path=full_url, province=info["province"],
+                            isp=info["isp"], latency=info.get("latency"),
+                            created_at=now, updated_at=now
+                        )
+                        async with added_lock:
+                            hosts_to_add.append(new_host)
+                            added += 1
+                        logger.info(f"验证通过: {host}:{port}, 省份={info['province']}, ISP={info['isp']}")
+                    except Exception as e:
+                        async with errors_lock:
+                            errors.append(f"{host}:{port}: {str(e)}")
+                        logger.error(f"验证失败: {host}:{port} - {e}", exc_info=True)
+
+            tasks = [verify_one(url, i, len(hosts)) for i, url in enumerate(hosts)]
+            await asyncio.gather(*tasks)
+
+            subscription.updated_at = timestamp_shanghai()
+            # 批量写入，使用写锁保护整个事务
+            duplicate_count = 0
+            with db_write_lock:
+                for h in hosts_to_add:
+                    db.add(h)
+                try:
+                    db.commit()
+                except exc.IntegrityError:
+                    db.rollback()
+                    duplicate_count = len(hosts_to_add)
+                    logger.warning(f"插入 host 时遇到重复数据，跳过 {duplicate_count} 条")
+
+            # 清除拉取状态
+            subscription.fetch_status = "idle"
+            with db_write_lock:
+                db.commit()
+
+            logger.info(f"拉取完成: 新增 {added} 个 HOST, 跳过 {skipped + duplicate_count} 个, 错误 {len(errors)} 个")
+
+            if added > 0 or skipped > 0:
+                with db_write_lock:
+                    create_notification(db, MSG_TYPE_SUCCESS,
+                        f"订阅拉取完成: {subscription.name or subscription.url}",
+                        f"新增 {added} 个主机，跳过 {skipped} 个",
+                        source=NOTIFICATION_SOURCE_SUBSCRIPTION,
+                        trigger_event=True
+                    )
+        except Exception as e:
+            logger.error(f"拉取过程发生严重错误: {e}", exc_info=True)
+            # 清除拉取状态（设置为 idle，下次可重新拉取）
+            try:
+                subscription.fetch_status = "idle"
+                with db_write_lock:
+                    db.commit()
+            except:
+                pass
+            try:
+                with db_write_lock:
+                    create_notification(db, MSG_TYPE_ERROR,
+                        f"订阅拉取失败: {subscription.name or subscription.url}",
+                        str(e),
+                        source=NOTIFICATION_SOURCE_SUBSCRIPTION,
+                        trigger_event=True
+                    )
+            except Exception as notif_e:
+                logger.error(f"发送通知失败: {notif_e}")
+        finally:
+            db.close()
 
 
 @app.post("/subscriptions/{subscription_id}/fetch")
@@ -467,6 +505,9 @@ async def fetch_subscription(subscription_id: int, db: Session = Depends(get_db)
     subscription = db.query(Subscription).filter(Subscription.id == subscription_id).first()
     if not subscription:
         raise BusinessException("订阅不存在", ErrorCode.NOT_FOUND)
+
+    if subscription.fetch_status == "fetching":
+        raise BusinessException("该订阅正在拉取中，请稍后再试", ErrorCode.PARAM_ERROR)
 
     asyncio.create_task(_pull_subscription(subscription_id))
     return success_response(msg="拉取任务已启动")
@@ -478,6 +519,11 @@ async def fetch_all_subscriptions(db: Session = Depends(get_db)):
     if not sources:
         logger.warning("没有启用的订阅")
         return success_response(data=None, msg="没有启用的订阅")
+
+    # 检查是否有订阅正在拉取
+    fetching_subs = [s for s in sources if s.fetch_status == "fetching"]
+    if fetching_subs:
+        raise BusinessException(f"有 {len(fetching_subs)} 个订阅正在拉取中，请稍后再试", ErrorCode.PARAM_ERROR)
 
     for subscription in sources:
         asyncio.create_task(_pull_subscription(subscription.id))
@@ -1074,6 +1120,38 @@ async def sub_m3u(request: Request, db: Session = Depends(get_db)):
 # 注册通知路由（必须在此处，不能在 __main__ 块内）
 from routers import notifications
 app.include_router(notifications.router, tags=["通知中心"])
+
+
+# ============ 设置管理 API ============
+
+@app.get("/settings")
+async def get_settings():
+    """获取所有设置"""
+    data = get_all_settings()
+    return success_response(data={
+        "settings": data,
+        "metadata": SETTINGS_METADATA
+    })
+
+
+class SettingsUpdate(BaseModel):
+    max_concurrent_subscriptions: Optional[int] = None
+    max_concurrent_hosts_per_subscription: Optional[int] = None
+    request_timeout: Optional[int] = None
+    latency_timeout: Optional[int] = None
+    playback_request_timeout: Optional[int] = None
+    playback_cache_ttl: Optional[int] = None
+
+
+@app.put("/settings")
+async def update_settings_api(body: SettingsUpdate):
+    """更新设置"""
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        return success_response(data=get_all_settings(), msg="无需更新")
+    
+    result = update_settings(update_data)
+    return success_response(data=result, msg="设置已更新")
 
 
 if __name__ == "__main__":

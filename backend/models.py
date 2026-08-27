@@ -10,6 +10,8 @@ class Subscription(Base):
     url = Column(String, unique=True, nullable=False)
     enabled = Column(Boolean, default=True)
     fetch_cron = Column(String, default="")
+    fetch_status = Column(String, default="idle", index=True)  # idle, fetching, error
+    last_fetch_time = Column(Integer, default=0)
     created_at = Column(Integer, default=0)
     updated_at = Column(Integer, default=0)
 
@@ -35,6 +37,7 @@ class ChannelGroup(Base):
     sort_order = Column(Integer, default=0)
     visible = Column(Boolean, default=True)
     created_at = Column(Integer, default=0)
+    updated_at = Column(Integer, default=0)
 
 
 class Channel(Base):
@@ -46,6 +49,7 @@ class Channel(Base):
     logo = Column(String, default="")  # 台标（URL 或名称）
     group_id = Column(Integer, nullable=False, default=0)
     created_at = Column(Integer, default=0)
+    updated_at = Column(Integer, default=0)
 
 
 class ChannelPlayUrl(Base):
@@ -56,4 +60,5 @@ class ChannelPlayUrl(Base):
     play_url = Column(String, nullable=False)
     ttl = Column(Integer, nullable=False, default=0)  # 过期时间戳
     created_at = Column(Integer, default=0)
+    updated_at = Column(Integer, default=0)
 

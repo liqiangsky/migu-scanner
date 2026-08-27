@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     playback_request_timeout: int = 10  # 单个主机尝试超时（秒）
     playback_cache_ttl: int = 18000  # 播放URL缓存时间（秒），默认5小时
 
+    # 拉取并发配置
+    max_concurrent_subscriptions: int = 5  # 最多同时拉取的订阅数
+    max_concurrent_hosts_per_subscription: int = 10  # 每个订阅最多同时验证的HOST数
+
     class Config:
         env_prefix = "MIGU_"
         env_file = ".env"

@@ -52,8 +52,8 @@
               <span class="txt">{{ sub.fetchCron || '未设置' }}</span>
             </div>
             <div class="grid-item">
-              <span class="lbl">最后更新</span>
-              <span class="txt">{{ formatTime(sub.updatedAt) || '未更新' }}</span>
+              <span class="lbl">上次拉取</span>
+              <span class="txt">{{ formatTime(sub.lastFetchTime) || '未拉取' }}</span>
             </div>
           </div>
 
@@ -61,6 +61,7 @@
             <button
               class="text-btn fetch-btn"
               @click="handleFetchSub(sub)"
+              :disabled="fetchingMap[sub.id]"
               :class="{ fetching: fetchingMap[sub.id] }"
             >
               <span class="material-symbols-outlined icon-g-btn">{{ fetchingMap[sub.id] ? 'hourglass_empty' : 'cloud_download' }}</span>
@@ -229,6 +230,12 @@ const handleToggleEnabled = async (sub) => {
 }
 
 const fetchAll = async () => {
+  // 检查是否已有订阅在拉取
+  const fetchingSubs = subscriptions.value.filter(s => s.fetchStatus === 'fetching')
+  if (fetchingSubs.length > 0) {
+    toast.warning(`有 ${fetchingSubs.length} 个订阅正在拉取中，请稍后再试`)
+    return
+  }
   fetchingAll.value = true
   try {
     await request.post('/subscriptions/fetch-all')
@@ -241,6 +248,10 @@ const fetchAll = async () => {
 }
 
 const handleFetchSub = async (sub) => {
+  if (sub.fetchStatus === 'fetching') {
+    toast.warning('该订阅正在拉取中，请稍后再试')
+    return
+  }
   fetchingMap.value[sub.id] = true
   try {
     await request.post(`/subscriptions/${sub.id}/fetch`)
