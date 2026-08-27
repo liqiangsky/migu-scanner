@@ -498,7 +498,7 @@ input:checked + .slider:before {
   flex-shrink: 0;
 }
 .icon-g-btn {
-  font-size: 18px !important;
+  font-size: 18px;
 }
 .primary-btn:active {
   transform: scale(0.9);

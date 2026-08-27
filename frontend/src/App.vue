@@ -77,7 +77,7 @@ onUnmounted(() => {
 }
 
 .tab-icon {
-  font-size: 22px !important;
+  font-size: 22px;
   font-variation-settings:
     'FILL' 0,
     'wght' 400,

@@ -5,7 +5,7 @@
       <h1 class="page-title">主机</h1>
       <div class="header-right">
         <div class="filter-counter-top">
-          <span>{{ totalCount }}</span> 台
+          <span>{{ totalCount }}</span> 个
         </div>
         <div class="header-filters">
           <RegionFilter v-model="selectedProvince" @change="handleFilterChange" />
@@ -501,7 +501,7 @@ useNotificationListener('HOST_RETEST', handleNotification)
 }
 
 .icon-g {
-  font-size: 16px !important;
+  font-size: 16px;
   font-variation-settings:
     'FILL' 0,
     'wght' 400,
@@ -512,7 +512,7 @@ useNotificationListener('HOST_RETEST', handleNotification)
 }
 
 .icon-g-btn {
-  font-size: 18px !important;
+  font-size: 18px;
 }
 
 .copy-btn .icon-g {
@@ -585,7 +585,7 @@ useNotificationListener('HOST_RETEST', handleNotification)
   opacity: 0.7;
 }
 .spinner-icon {
-  font-size: 16px !important;
+  font-size: 16px;
   vertical-align: middle;
   margin-right: 4px;
 }

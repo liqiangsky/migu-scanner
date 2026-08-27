@@ -109,7 +109,7 @@ defineExpose({ add })
 }
 
 .sc-toast-icon {
-  font-size: 20px !important;
+  font-size: 20px;
   flex-shrink: 0;
 }
 
@@ -129,7 +129,7 @@ defineExpose({ add })
   background-color: rgba(255, 255, 255, 0.1);
 }
 .sc-toast-close .material-symbols-outlined {
-  font-size: 18px !important;
+  font-size: 18px;
 }
 
 .sc-toast-item {

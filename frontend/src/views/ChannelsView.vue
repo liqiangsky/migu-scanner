@@ -1523,7 +1523,7 @@ onUnmounted(() => {
   transform: scale(0.9);
 }
 .icon-g-btn {
-  font-size: 18px !important;
+  font-size: 18px;
 }
 
 .header-spacer {
@@ -1645,7 +1645,7 @@ onUnmounted(() => {
   border-radius: 10px;
 }
 .channel-icon .material-symbols-outlined {
-  font-size: 22px !important;
+  font-size: 22px;
   color: #aaa;
 }
 .channel-info {
@@ -1726,7 +1726,7 @@ onUnmounted(() => {
   padding: 16px;
 }
 .icon-sm {
-  font-size: 16px !important;
+  font-size: 16px;
 }
 
 /* ===== 空状态 ===== */
@@ -1736,7 +1736,7 @@ onUnmounted(() => {
   color: var(--text-muted);
 }
 .empty-icon {
-  font-size: 48px !important;
+  font-size: 48px;
   color: var(--text-disabled);
   margin-bottom: 16px;
 }
@@ -1746,8 +1746,8 @@ onUnmounted(() => {
   margin-bottom: 8px;
 }
 .empty-hint {
-  font-size: 13px !important;
-  color: var(--text-muted) !important;
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
 /* ===== 弹窗样式 ===== */
@@ -1853,7 +1853,7 @@ onUnmounted(() => {
   background: rgba(0, 122, 255, 0.04);
 }
 .upload-icon {
-  font-size: 48px !important;
+  font-size: 48px;
   color: var(--text-muted);
   margin-bottom: 12px;
 }
@@ -1903,7 +1903,7 @@ onUnmounted(() => {
   color: var(--color-blue);
 }
 .mode-tab .icon-sm {
-  font-size: 18px !important;
+  font-size: 18px;
 }
 
 /* ===== URL 输入区域 ===== */
@@ -1913,7 +1913,7 @@ onUnmounted(() => {
   align-items: center;
 }
 .url-icon {
-  font-size: 22px !important;
+  font-size: 22px;
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -1981,7 +1981,7 @@ onUnmounted(() => {
   border-radius: var(--radius-input);
 }
 .file-icon {
-  font-size: 28px !important;
+  font-size: 28px;
   color: var(--color-blue);
 }
 .file-info {
@@ -2122,7 +2122,7 @@ onUnmounted(() => {
   background: #e8e8ed;
 }
 .preview-group-expand-icon {
-  font-size: 20px !important;
+  font-size: 20px;
   color: var(--text-muted);
   transition: transform 0.2s;
 }
@@ -2259,7 +2259,7 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 .option-icon .material-symbols-outlined {
-  font-size: 22px !important;
+  font-size: 22px;
   color: var(--color-blue);
 }
 .option-content {
@@ -2293,8 +2293,8 @@ onUnmounted(() => {
   background: var(--color-blue);
 }
 .check-icon {
-  font-size: 16px !important;
-  color: #fff !important;
+  font-size: 16px;
+  color: #fff;
 }
 
 /* ===== 按钮 ===== */
@@ -2396,7 +2396,7 @@ onUnmounted(() => {
   margin-bottom: 12px;
 }
 .dedup-icon {
-  font-size: 18px !important;
+  font-size: 18px;
 }
 .duplicate-list {
   display: flex;
@@ -2476,7 +2476,7 @@ onUnmounted(() => {
   color: var(--color-green);
 }
 .no-dup-icon {
-  font-size: 48px !important;
+  font-size: 48px;
   margin-bottom: 12px;
 }
 .no-duplicate p {
@@ -2795,7 +2795,7 @@ onUnmounted(() => {
   border-radius: 10px;
 }
 .batch-group-expand-icon {
-  font-size: 20px !important;
+  font-size: 20px;
   color: var(--text-muted);
   transition: transform 0.2s;
 }
@@ -2935,6 +2935,6 @@ onUnmounted(() => {
   margin-bottom: 10px;
 }
 .warning-icon {
-  font-size: 20px !important;
+  font-size: 20px;
 }
 </style>

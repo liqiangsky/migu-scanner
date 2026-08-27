@@ -45,7 +45,7 @@ defineEmits(['change'])
   border-color: var(--color-blue);
 }
 .batch-checkbox-custom.indeterminate .check-icon {
-  color: var(--color-blue) !important;
+  color: var(--color-blue);
 }
 .check-icon {
   font-size: 12px;

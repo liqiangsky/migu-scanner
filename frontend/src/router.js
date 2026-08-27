@@ -4,10 +4,11 @@ import HostsView from './views/HostsView.vue'
 import ChannelsView from './views/ChannelsView.vue'
 
 const routes = [
-  { path: '/', redirect: '/subscriptions' },
+  { path: '/', redirect: '/hosts' },
   { path: '/subscriptions', name: 'subscriptions', component: SubscriptionsView },
   { path: '/channels', name: 'channels', component: ChannelsView },
-  { path: '/hosts', name: 'hosts', component: HostsView }
+  { path: '/hosts', name: 'hosts', component: HostsView },
+  { path: '/:pathMatch(.*)*', redirect: '/channels' }
 ]
 
 const router = createRouter({
