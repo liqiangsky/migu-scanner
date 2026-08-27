@@ -1,7 +1,7 @@
 # ==========================================
 # 前端 Dockerfile
-# 构建: docker build -t migu-frontend .
-# 运行: docker run -d --name migu-frontend -p 3000:80 migu-frontend
+# 构建: docker build -t migu-scanner .
+# 运行: docker run -d --name migu-scanner -p 3000:80 migu-scanner
 # 国内镜像加速: docker build --build-arg BASE_REGISTRY=docker.m.daocloud.io .
 # ==========================================
 
